@@ -147,10 +147,10 @@ class SchottkyMonitor():
         self._check_Taylor_approx()
 
     def _init_processing(self, deltaQ, Qx, Qy, band_width):
-        '''
-        For each region of the Schottky spectrum, create an array of normalised frequencies 
-        from -band_with/2 to +band_with/2 around the center of the Schottky band. 
-        '''
+        """
+        For each region of the Schottky spectrum, create an array of normalised frequencies
+        from -band_with/2 to +band_with/2 around the center of the Schottky band.
+        """
         n_freq = band_width / deltaQ
         center_freq = np.arange(-(n_freq // 2), (n_freq) // 2) * band_width / n_freq
         self.frequencies = {
@@ -165,7 +165,7 @@ class SchottkyMonitor():
         self.PSD_avg = {i: [] for i in self.frequencies.keys()}
 
     def _check_Taylor_approx(self):
-        #Longitudinal band, Eq. (2.3)
+        # Longitudinal band, Eq. (2.3)
         if self.processing_param['z']:
             delta_omega_max = max(self.frequencies['center']) * 2 * np.pi * self.f_rev
             max_error = self.N_macropart_max ** 0.5 * (delta_omega_max * self.tau_max) ** self.n_taylor * \
@@ -174,7 +174,7 @@ class SchottkyMonitor():
                 print('Number of Taylor terms too low for the longitudinal band')
             print(f'Maximal Talor truncation error in z plane to be compared against sqrt(PSD): {max_error}')
 
-        #transverse bands
+        # transverse bands
         if self.processing_param['x']:
             delta_omega_max = max(self.frequencies['upperH']) * 2 * np.pi * self.f_rev
             max_error = self.N_macropart_max ** 0.5 * self.x_max * (delta_omega_max * self.tau_max) ** self.n_taylor * \
@@ -193,7 +193,7 @@ class SchottkyMonitor():
     def clear_spectrum(self):
         """
         Clear the instantaneous spectra but keep the coefficients L and T.
-        Can be use to recompute Schottky spectra for different processing 
+        Can be used to recompute Schottky spectra for different processing
         parameters (window, frequency resolution, band widths) without 
         tracking the particles agan
         """
