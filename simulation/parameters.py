@@ -82,3 +82,13 @@ class Synchrotron_configuration:
         self.lag_rf = lag_rf
         self.dqx = dqx
         self.dqy = dqy
+
+
+bandwidth = 3  # MHz
+fc = 35.8  # MHz
+
+
+class Detector_configuration:
+    def __init__(self, bandwidth=bandwidth, fc=fc):
+        self.bandwidth = bandwidth
+        self.fc = fc

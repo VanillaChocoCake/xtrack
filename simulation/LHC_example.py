@@ -1,6 +1,9 @@
 import xtrack as xt
 import xpart as xp
 import matplotlib.pyplot as plt
+import numpy as np
+from tiny_function import cal_weight
+
 lmap = xt.LineSegmentMap(length=26658.8831999989,
                          qx=0.27, qy=0.295,
                          dqx=15, dqy=15,
@@ -21,13 +24,17 @@ bunch = xp.generate_matched_gaussian_bunch(
     line=line,
     total_intensity_particles=1e11,
     sigma_z=7e-2)
-n_turns = int(2e5)
+n_turns = int(np.power(2,  1) * 100)
 line.track(bunch, num_turns=n_turns, with_progress=True)
-schottky_monitor.process_spectrum(inst_spectrum_len=int(n_turns/20), deltaQ=5e-5, band_width=0.5, Qx=0.27, Qy=0.295, x=True, y=False, z=True)
-plt.figure(figsize=(12,4))
-ax1 = plt.subplot(131)
-ax2 = plt.subplot(132)
-ax3 = plt.subplot(133)
+schottky_monitor.process_spectrum(inst_spectrum_len=int(n_turns / 100),
+                                  deltaQ=5e-5, band_width=0.5,
+                                  Qx=0.27, Qy=0.295,
+                                  x=True, y=False, z=True)
+weight = cal_weight(num=len(schottky_monitor.PSD_avg['center']))
+plt.figure(figsize=(20, 8))
+ax1 = plt.subplot(1, 3, 1)
+ax2 = plt.subplot(1, 3, 2)
+ax3 = plt.subplot(1, 3, 3)
 for ax, region in zip([ax1, ax2, ax3], ['lowerH', 'center', 'upperH']):
     ax.plot(schottky_monitor.frequencies[region], schottky_monitor.PSD_avg[region])
     ax.set_xlabel(f'Frequency [$f_0$]')
