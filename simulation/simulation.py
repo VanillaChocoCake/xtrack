@@ -63,7 +63,7 @@ bunch = xp.generate_matched_gaussian_bunch(num_particles=int(1e4),
                                            sigma_z=7e-2
                                            )
 
-n_turns = int(np.power(2, 14) * 100)
+n_turns = int(np.power(2, 11) * 100)
 line.track(bunch, num_turns=n_turns, with_progress=True)
 
 # In order to take the fc and bandwidth of the detector into consideration,
@@ -74,15 +74,17 @@ schottky_monitor.process_spectrum(inst_spectrum_len=int(n_turns / 100), deltaQ=1
                                   x=True, y=False, z=True)
 
 weight = cal_weight(num=len(schottky_monitor.PSD_avg['center']))
-plt.figure(figsize=(20, 8))
+plt.figure(figsize=(20, 16))
 ax1 = plt.subplot(1, 3, 1)
 ax2 = plt.subplot(1, 3, 2)
 ax3 = plt.subplot(1, 3, 3)
 for ax, region in zip([ax1, ax2, ax3], ['lowerH', 'center', 'upperH']):
-    ax.plot(schottky_monitor.frequencies[region], schottky_monitor.PSD_avg[region])
+    PSD = np.multiply(schottky_monitor.PSD_avg[region], weight)
+    ax.plot(schottky_monitor.frequencies[region], 20 * np.log10(PSD), color='r')
+    ax.plot(schottky_monitor.frequencies[region], 20 * np.log10(schottky_monitor.PSD_avg[region]), color='g')
     ax.set_xlabel(f'Frequency [$f_0$]')
     ax.set_ylabel(f'PSD [arb. units]')
-    ax.set_yscale('log')
+    # ax.set_yscale('log')
 plt.tight_layout()
 plt.savefig(f"schottky_n_turns_{n_turns}.png")
 plt.show()
