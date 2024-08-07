@@ -73,6 +73,7 @@ schottky_monitor.process_spectrum(inst_spectrum_len=int(n_turns / 100), deltaQ=1
                                   Qx=config.qx, Qy=config.qy,
                                   x=True, y=False, z=True)
 
+gain = 100
 weight = cal_weight(num=len(schottky_monitor.PSD_avg['center']))
 plt.figure(figsize=(20, 16))
 ax1 = plt.subplot(1, 3, 1)
