@@ -24,7 +24,7 @@ bunch = xp.generate_matched_gaussian_bunch(
     line=line,
     total_intensity_particles=1e11,
     sigma_z=7e-2)
-n_turns = int(np.power(2,  10) * 100)
+n_turns = int(np.power(2,  11) * 100)
 line.track(bunch, num_turns=n_turns, with_progress=True)
 schottky_monitor.process_spectrum(inst_spectrum_len=int(n_turns / 100),
                                   deltaQ=5e-5, band_width=0.5,

@@ -82,7 +82,7 @@ bunch = xp.generate_matched_gaussian_bunch(num_particles=int(1e4),
                                            sigma_z=7e-2
                                            )
 
-n_turns = int(np.power(2, 10) * 100)
+n_turns = int(np.power(2, 11) * 100)
 line.track(bunch, num_turns=n_turns, with_progress=True)
 
 # In order to take the fc and bandwidth of the detector into consideration,
