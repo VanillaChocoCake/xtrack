@@ -70,18 +70,25 @@ line.track(bunch, num_turns=n_turns, with_progress=True)
 # Qx, Qy and band_width need to be adjusted to fit fc
 schottky_monitor.process_spectrum(inst_spectrum_len=int(n_turns / 100), deltaQ=1e-5,
                                   band_width=5e-2,
+                                  Qx=0.97*config.qx, Qy=config.qy,
+                                  x=True, y=False, z=True)
+"""
+schottky_monitor.process_spectrum(inst_spectrum_len=int(n_turns / 100), deltaQ=1e-5,
+                                  band_width=5e-2,
                                   Qx=config.qx, Qy=config.qy,
                                   x=True, y=False, z=True)
+"""
 
 gain = 100
-weight = cal_weight(num=len(schottky_monitor.PSD_avg['center']))
+steepness = 5
+weight = cal_weight(num=len(schottky_monitor.PSD_avg['center']), gain=gain, steepness=steepness)
 plt.figure(figsize=(20, 16))
 ax1 = plt.subplot(1, 3, 1)
 ax2 = plt.subplot(1, 3, 2)
 ax3 = plt.subplot(1, 3, 3)
 for ax, region in zip([ax1, ax2, ax3], ['lowerH', 'center', 'upperH']):
     PSD = np.multiply(schottky_monitor.PSD_avg[region], weight)
-    ax.plot(schottky_monitor.frequencies[region], 20 * np.log10(PSD), color='r')
+    ax.plot(schottky_monitor.frequencies[region], 20 * np.log10(PSD) - gain, color='r')
     ax.plot(schottky_monitor.frequencies[region], 20 * np.log10(schottky_monitor.PSD_avg[region]), color='g')
     ax.set_xlabel(f'Frequency [$f_0$]')
     ax.set_ylabel(f'PSD [arb. units]')

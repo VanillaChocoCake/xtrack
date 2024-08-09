@@ -28,16 +28,23 @@ n_turns = int(np.power(2,  11) * 100)
 line.track(bunch, num_turns=n_turns, with_progress=True)
 schottky_monitor.process_spectrum(inst_spectrum_len=int(n_turns / 100),
                                   deltaQ=5e-5, band_width=0.5,
+                                  Qx=0.35, Qy=0.295,
+                                  x=True, y=False, z=True)
+"""
+schottky_monitor.process_spectrum(inst_spectrum_len=int(n_turns / 100),
+                                  deltaQ=5e-5, band_width=0.5,
                                   Qx=0.27, Qy=0.295,
                                   x=True, y=False, z=True)
-weight = cal_weight(num=len(schottky_monitor.PSD_avg['center']))
+"""
+gain = 100
+weight = cal_weight(num=len(schottky_monitor.PSD_avg['center']), steepness=5, gain=gain)
 plt.figure(figsize=(20, 16))
 ax1 = plt.subplot(1, 3, 1)
 ax2 = plt.subplot(1, 3, 2)
 ax3 = plt.subplot(1, 3, 3)
 for ax, region in zip([ax1, ax2, ax3], ['lowerH', 'center', 'upperH']):
     PSD = np.multiply(schottky_monitor.PSD_avg[region], weight)
-    ax.plot(schottky_monitor.frequencies[region], 20 * np.log10(PSD), color='r')
+    ax.plot(schottky_monitor.frequencies[region], 20 * np.log10(PSD) - gain, color='r')
     ax.plot(schottky_monitor.frequencies[region], 20 * np.log10(schottky_monitor.PSD_avg[region]), color='g')
     ax.set_xlabel(f'Frequency [$f_0$]')
     ax.set_ylabel(f'PSD [arb. units]')
