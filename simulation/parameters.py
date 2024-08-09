@@ -28,7 +28,7 @@ dqx = -1.46
 dqy = -1.34
 
 
-class Synchrotron_configuration:
+class SynchrotronConfiguration:
     def __init__(self,
                  length=length,
                  qx=qx,
@@ -84,11 +84,13 @@ class Synchrotron_configuration:
         self.dqy = dqy
 
 
-bandwidth = 3  # MHz
-fc = 35.8  # MHz
+bandwidth = 3e6  # Hz
+fc = 35.8e6  # Hz
 
 
-class Detector_configuration:
+class DetectorConfiguration:
     def __init__(self, bandwidth=bandwidth, fc=fc):
         self.bandwidth = bandwidth
         self.fc = fc
+        self.fl = self.fc - self.bandwidth / 2
+        self.fh = self.fc + self.bandwidth / 2
