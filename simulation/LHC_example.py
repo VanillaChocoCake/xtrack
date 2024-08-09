@@ -44,7 +44,7 @@ ax2 = plt.subplot(1, 3, 2)
 ax3 = plt.subplot(1, 3, 3)
 for ax, region in zip([ax1, ax2, ax3], ['lowerH', 'center', 'upperH']):
     PSD = np.multiply(schottky_monitor.PSD_avg[region], weight)
-    ax.plot(schottky_monitor.frequencies[region], 20 * np.log10(PSD) - gain, color='r')
+    ax.plot(schottky_monitor.frequencies[region], 20 * np.log10(PSD), color='r')
     ax.plot(schottky_monitor.frequencies[region], 20 * np.log10(schottky_monitor.PSD_avg[region]), color='g')
     ax.set_xlabel(f'Frequency [$f_0$]')
     ax.set_ylabel(f'PSD [arb. units]')

@@ -47,15 +47,17 @@ twiss = line.twiss()
 # f_rev = 1 / twiss.T_rev0
 f_rev = 6.5e6
 schottky_harmonic = np.array([np.floor(detector.fc / f_rev), np.ceil(detector.fc / f_rev)])
-slow_fc = (schottky_harmonic - config.qx) * f_rev
-fast_fc = (schottky_harmonic + config.qx) * f_rev
-for harmonic, slow, fast in zip(schottky_harmonic, slow_fc, fast_fc):
+slow_fc_x = (schottky_harmonic - config.qx) * f_rev
+fast_fc_x = (schottky_harmonic + config.qx) * f_rev
+slow_fc_y = (schottky_harmonic - config.qy) * f_rev
+fast_fc_y = (schottky_harmonic + config.qy) * f_rev
+for harmonic, slow, fast in zip(schottky_harmonic, slow_fc_x, fast_fc_x):
     if (detector.fl + 0.05 * detector.bandwidth < slow < detector.fh - 0.05 * detector.bandwidth
             or
             detector.fl + 0.05 * detector.bandwidth < fast < detector.fh - 0.05 * detector.bandwidth):
         schottky_harmonic = harmonic
-        slow_fc = slow
-        fast_fc = fast
+        slow_fc_x = slow
+        fast_fc_x = fast
         break
 try:
     if len(schottky_harmonic) == 2:
@@ -88,7 +90,8 @@ line.track(bunch, num_turns=n_turns, with_progress=True)
 # In order to take the fc and bandwidth of the detector into consideration,
 # Qx, Qy and band_width(in revolution frequency unit) need to be adjusted to fit fc
 band_width = detector.bandwidth / f_rev
-adjusted_qx = abs(detector.fc - slow_fc) / (schottky_harmonic * f_rev)
+adjusted_qx = abs(detector.fc - slow_fc_x) / (schottky_harmonic * f_rev)
+adjusted_qy = abs(detector.fc - slow_fc_y) / (schottky_harmonic * f_rev)
 
 schottky_monitor.process_spectrum(inst_spectrum_len=int(n_turns / 100), deltaQ=1e-5,
                                   band_width=band_width,
