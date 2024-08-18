@@ -6,6 +6,3 @@ git clone https://github.com/VanillaChocoCake/xtrack
 
 3.
 pip install -e xtrack
-
-4.
-move xtrack/xtrack out
