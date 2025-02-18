@@ -85,7 +85,7 @@ class SynchrotronConfiguration:
 
 
 bandwidth = 3e6  # Hz
-fc = 35.8e6  # Hz
+fc = 38.5e6  # Hz
 
 
 class DetectorConfiguration:
