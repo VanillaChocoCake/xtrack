@@ -1,10 +1,27 @@
 import numpy as np
 import matplotlib.pyplot as plt
-import scipy.constants as sc
 from scipy.fft import fft, fftshift
 from scipy import signal
 from scipy.signal import savgol_filter
+from scipy.signal.windows import hamming
 from scipy.ndimage import gaussian_filter1d
+from scipy.interpolate import interp1d
+
+def generate_q_list(method, n_points, lower_limit, upper_limit):
+    x = np.linspace(0, 1, num=n_points)
+    if method == "sin" or method == "cos":
+        q_list = (upper_limit - lower_limit)*0.5*np.sin(2*np.pi*x)
+        q_list = q_list - min(q_list) + lower_limit
+    elif method == "linear":
+        q_list = np.linspace(lower_limit, upper_limit, num=n_points)
+    elif method == "random":
+        y = np.random.uniform(lower_limit, upper_limit, n_points)
+        y = gaussian_filter(y, 2*np.ceil(n_points/10) + 1)
+        f = interp1d(x, y, "cubic")
+        q_list = f(x)
+    else:
+        q_list = (upper_limit + lower_limit)*0.5*np.ones_like(x)
+    return q_list
 
 def plot(data):
     plt.figure()
@@ -12,21 +29,79 @@ def plot(data):
         plt.plot(d)
     plt.show()
 
-def reshape_with_padding(arr, batch_size):
-    # 获取原始数组长度
+def cal_psd(x_data, batch_size, f_sampling, window_size, f_rev, lower_limit, upper_limit):
+    psd_s = 0
+    for j in range(x_data.shape[0]):
+        # 计算FFT
+        X = fft(x_data[j, :])
+        # fftshift将零频分量移到中心
+        X_shifted = fftshift(X)
+        # 生成频率轴，从-f_sampling/2到f_sampling/2
+        # 计算PSD（归一化方法可根据实际需要调整）
+        psd_j = np.abs(X_shifted) ** 2 / (batch_size * f_sampling)
+        # psd_j = sgolay_filter(psd_j, window_size-2, 4)
+        psd_j = gaussian_filter(psd_j, window_size)
+        freqs, psd_j = fold_spectrum(psd_j, f_rev, f_sampling)
+        psd_j = psd_j[(freqs / f_rev >= lower_limit) & (freqs / f_rev <= upper_limit)]
+        psd_s += psd_j
+    psd_s -= min(psd_s)
+    tune_unit = freqs[(freqs / f_rev >= lower_limit) & (freqs / f_rev <= upper_limit)] / f_rev
+    return tune_unit, psd_s
+
+def windowed_reshape(arr, batch_size):
+    """
+    将一维数组分批次并应用汉明窗
+    :param arr: 输入一维数组
+    :param batch_size: 每个批次的大小
+    :return: 二维数组（批次 x batch_size），每个批次已加窗
+    """
+    # 转换为numpy数组
+    arr = np.asarray(arr)
+
+    # 计算需要补零的数量
     n = arr.size
-    # 计算不足 batch_size 的部分
     remainder = n % batch_size
     if remainder != 0:
-        # 需要补齐的0的个数
         pad_length = batch_size - remainder
-        # 使用 np.concatenate 在末尾补0
         arr = np.concatenate([arr, np.zeros(pad_length, dtype=arr.dtype)])
-    # 重塑为 (-1, batch_size) 形状，其中 -1 表示自动计算行数
-    return arr.reshape(-1, batch_size)
+    # 重塑并逐行加窗
+    reshaped = arr.reshape(-1, batch_size)
+    window = hamming(batch_size)
+    return reshaped*window
 
+def predict_next_point(x_data):
+    """
+    使用线性回归预测时间序列的下一个点
 
-def apply_bandpass_filter(x_data, fs=84e6, lowcut=37e6, highcut=40e6, order=5):
+    参数：
+    x_data : np.array - 一维时间序列数据
+
+    返回：
+    float - 预测的下一个点的值
+
+    异常处理：
+    - 自动转换输入为numpy数组
+    - 检查数据维度有效性
+    - 确保至少2个数据点用于拟合
+    """
+    # 输入数据验证和转换
+    x = np.asarray(x_data)
+    if x.ndim != 1:
+        raise ValueError("输入必须是1维数组")
+    if len(x) < 2:
+        raise ValueError("至少需要2个数据点进行线性拟合")
+
+    # 生成时间序列索引作为特征
+    X = np.arange(len(x)).reshape(-1, 1)
+
+    # 使用numpy进行最小二乘拟合
+    A = np.vstack([X.ravel(), np.ones(len(x))]).T
+    slope, intercept = np.linalg.lstsq(A, x, rcond=None)[0]
+
+    # 预测下一个时间点的值
+    return slope * len(x) + intercept
+
+def apply_bandpass_filter(x_data, fs, lowcut, highcut, order=5):
     """
     应用带通滤波器，保留37-40MHz频段信号。
 
@@ -47,7 +122,6 @@ def apply_bandpass_filter(x_data, fs=84e6, lowcut=37e6, highcut=40e6, order=5):
     filtered_data = signal.filtfilt(b, a, x_data)
 
     return filtered_data
-
 
 def generate_noisy_signal(x_data, snr_db):
     """
@@ -99,8 +173,7 @@ def normalize_to_01(x_data):
     # 归一化到 [0, 1] 范围
     normalized_data = (x_data - x_min) / (x_max - x_min)
 
-    return normalized_data
-
+    return normalized_data + 1
 
 def sgolay_filter(data, window_length, polyorder=4, mode='nearest'):
     """
@@ -122,58 +195,6 @@ def sgolay_filter(data, window_length, polyorder=4, mode='nearest'):
         raise ValueError("polyorder必须小于window_length")
 
     return savgol_filter(data, window_length, polyorder, mode=mode)
-
-
-import numpy as np
-
-
-def noise_reduction_gate(x_data, f_rev, f_sampling):
-    """
-    处理横向肖特基信号数据，保留每个回旋周期前50%的数据
-
-    参数：
-    x_data : numpy.ndarray - 输入信号数组
-    f_rev : float - 回旋频率 (Hz)
-    f_sampling : float - 采样频率 (必须是f_rev的偶数倍)
-
-    返回：
-    processed : numpy.ndarray - 处理后的信号数组，未保留部分置零
-    """
-    # 计算每个周期的采样点数
-    samples_per_cycle = int(f_sampling / f_rev)
-
-    # 验证采样率是否为回旋频率的偶数倍
-    if samples_per_cycle % 2 != 0:
-        raise ValueError("f_sampling必须是f_rev的偶数倍")
-
-    # 初始化输出数组
-    processed = np.zeros_like(x_data)
-
-    # 计算每个周期需要保留的点数
-    keep_points = samples_per_cycle // 2
-
-    # 分块处理数据
-    total_samples = len(x_data)
-    num_full_cycles = total_samples // samples_per_cycle
-
-    # 处理完整周期
-    for i in range(num_full_cycles):
-        start = i * samples_per_cycle
-        end = start + samples_per_cycle
-        processed[start:start + keep_points] = x_data[start:start + keep_points]
-
-    # 处理剩余样本
-    remaining_samples = total_samples % samples_per_cycle
-    if remaining_samples > 0:
-        start = num_full_cycles * samples_per_cycle
-        keep_remaining = min(keep_points, remaining_samples)
-        processed[start:start + keep_remaining] = x_data[start:start + keep_remaining]
-
-    return processed
-
-
-import numpy as np
-
 
 def fold_spectrum(spectrum, f_rev, f_sampling):
     """
@@ -247,7 +268,6 @@ def fold_spectrum(spectrum, f_rev, f_sampling):
     base_freqs = np.linspace(0, f_rev / 2, len(folded_psd), endpoint=False)
     return base_freqs, folded_psd
 
-
 def gaussian_filter(x_data, window_size):
     """
     对一维信号进行高斯滤波
@@ -272,10 +292,6 @@ def gaussian_filter(x_data, window_size):
 
     # 执行滤波（边界处理模式可调整）
     return gaussian_filter1d(x, sigma=sigma, truncate=truncate, mode='nearest')
-
-
-import numpy as np
-
 
 def find_local_maxima(x_data, include_edges=True, plateau_detection=False):
     """
@@ -325,16 +341,27 @@ def find_local_maxima(x_data, include_edges=True, plateau_detection=False):
 from collections import deque
 
 class q_queue:
-    def __init__(self, max_len):
+    def __init__(self, max_len, decay_factor=0.85):
         self.max_len = max_len
         self.q_queue = deque(maxlen=max_len)
-        self.confidence_queue = deque(maxlen=max_len)
-        self.weight_decay = [i/(max_len + 2) for i in range(1, max_len+1)]
+        self.q_queue.extend(np.zeros(self.max_len))
+        self.decay_factor = decay_factor
         self.first_append = True
-    def append(self, q, confidence):
+        self.psd = []
+        self.tune_unit = []
+    def append(self, q, tune_unit, psd):
         if self.first_append:
-            self.q_queue.extend(np.zeros(self.max_len))
-            self.confidence_queue.extend(np.zeros(self.max_len))
+            self.psd = np.zeros_like(psd)
             self.first_append = False
         self.q_queue.append(q)
-        self.confidence_queue.append(confidence)
+        self.psd += psd
+        self.psd *= self.decay_factor
+        self.tune_unit = tune_unit
+    def q_ref(self):
+        return self.tune_unit[np.argmax(self.psd)]
+    def q_pred(self):
+        if self.q_queue.__len__() == 1:
+            return self.q_ref()
+        else:
+            return predict_next_point(np.array(self.q_queue))
+
