@@ -30,15 +30,18 @@ else:
     qy = config.qy
 qx_list = generate_q_list(method, 351, qx - 0.09, qx + 0.09)
 qy_list = generate_q_list(method, 351, qy - 0.09, qy + 0.09)
+q_ref_list = []
 q_measured_list = []
+q_predicted_list = []
 peak_detection_list = []
 cf_list = []
 alpha = 0.45
+upper_limit = qx + 0.1
+lower_limit = qx - 0.1
 # for i in range(len(f_rev_range)):
 for i in range(len(qx_list)):
     qy = qy_list[i]
     qx = qx_list[i]
-    q = qx
     lmap = xt.LineSegmentMap(length=config.length,
                              qx=qx, qy=qy,
                              betx=config.betx, bety=config.bety,
@@ -117,69 +120,54 @@ for i in range(len(qx_list)):
     # x_data = BPM.y_mean
     x_data = np.nan_to_num(x_data, nan=0)
     x_data_noisy = generate_noisy_signal(x_data, snr)
-    # x_data_noisy[mask_nan] = 0
-    # x_data_noisy = noise_reduction_gate(x_data_noisy, f_rev, f_sampling)
-    # plot([x_data, x_data_noisy])
-    # x_data_noisy = apply_bandpass_filter(x_data_noisy, fs=f_sampling, lowcut=detector.fl, highcut=detector.fh)
     x_data_noisy = windowed_reshape(x_data_noisy, batch_size)
-    # N = batch_size
-    # psd_s = 0
-    # # psd_p = 1
-    # for j in range(x_data_noisy.shape[0]):
-    #     # 计算FFT
-    #     X = fft(x_data_noisy[j, :])
-    #     # fftshift将零频分量移到中心
-    #     X_shifted = fftshift(X)
-    #     # 生成频率轴，从-f_sampling/2到f_sampling/2
-    #     # 计算PSD（归一化方法可根据实际需要调整）
-    #     psd_j = np.abs(X_shifted) ** 2 / (N * f_sampling)
-    #     # psd_j = sgolay_filter(psd_j, window_size-2, 4)
-    #     psd_j = gaussian_filter(psd_j, window_size)
-    #     freqs, psd_j = fold_spectrum(psd_j, f_rev, f_sampling)
-    #     psd_j = psd_j[(freqs / f_rev >= 0.22) & (freqs / f_rev <= 0.42)]
-    #     # psd_j[0] = 0
-    #     # psd_j[-1] = 0
-    #     psd_s += psd_j
-    #     # psd_p *= (normalize_to_01(psd_j) + 1)
-    #     # psd_p = normalize_to_01(psd_p) + 1
-    #     # psd_p *= normalize_to_01(psd_j)
-    #     # psd_p = normalize_to_01(psd_p)
-    # psd_s -= min(psd_s)
-    # tune_unit = freqs[(freqs / f_rev >= 0.22) & (freqs / f_rev <= 0.42)] / f_rev
-    # # psd_s = normalize_to_01(psd_s)
-    # psd = psd_s
-    tune_unit, psd = cal_psd(x_data_noisy, batch_size, f_sampling, window_size, f_rev, q - 0.01, q + 0.01)
-    index = find_local_maxima(psd)
-    weight_amplitude = normalize_to_01(psd[index]) - 1
+    tune_unit, psd = cal_psd(x_data_noisy, batch_size, f_sampling, window_size, f_rev, lower_limit, upper_limit)
+    index_bool_maxima, index_value_maxima= find_local_maxima(psd)
+    index_bool_minima, index_value_minima= find_local_minima(psd)
+    weight_amplitude = normalize_to_01(psd[index_bool_maxima]) - 1
     try:
         q_ref = q_prev_queue.q_ref()
         assert q_ref > 0
     except:
-        q_ref = np.mean(tune_unit[index])
+        q_ref = np.mean(tune_unit[index_bool_maxima])
     q_pred = q_prev_queue.q_pred()
-    distance = normalize_to_01(abs(tune_unit[index] - (q_ref + q_pred)/2)) - 1
+    q_ref_list.append(q_ref)
+    q_predicted_list.append(q_pred)
+    distance = normalize_to_01(abs(tune_unit[index_bool_maxima] - (q_ref + q_pred)/2)) - 1
     weight_distance = 1 - distance
     confidence = alpha * weight_amplitude + (1 - alpha) * weight_distance
     q_measured_index = np.argmax(confidence)
-    q_measured = tune_unit[index][q_measured_index]
+    q_measured = tune_unit[index_bool_maxima][q_measured_index]
     q_confidence = max(confidence)
     if q_confidence >= 0.95:
         alpha = max(0.1, alpha - 0.01)
     q_prev_queue.append(q_measured, tune_unit, psd)
     q_measured_list.append(q_measured)
-    peak_detection_list.append(tune_unit[index][np.argmax(weight_amplitude)])
-    plt.figure()
-    plt.plot(tune_unit, normalize_to_01(psd), label="sum")
-    plt.plot(tune_unit, normalize_to_01(q_prev_queue.psd), label="ref")
-    # plt.plot(tune_unit, normalize_to_01(psd_p), label="prod")
-    plt.legend()
-    plt.show()
-    print(f"qx:{qx}, q_ref:{q_ref}, q_measured:{q_measured}, confidence:{q_confidence * 100}%")
+    q_peak_detection = tune_unit[index_bool_maxima][np.argmax(weight_amplitude)]
+    peak_detection_list.append(q_peak_detection)
+    closest_minima = find_closest_values(index_value_maxima[q_measured_index], index_value_minima)
+    cf_start = int(max([0, # Should be bigger than 0
+                        index_value_maxima[q_measured_index] - np.floor(side_point_num/2), # Expected span
+                        closest_minima[0]])) # Stop at the first minima on the left
+    cf_end = int(min([len(tune_unit) - 1,
+                      index_value_maxima[q_measured_index] + np.floor(side_point_num/2),
+                      closest_minima[1]]))
+    q_curve_fitting = gaussian_peak_fit(tune_unit[cf_start:cf_end], psd[cf_start:cf_end])
+    cf_list.append(q_curve_fitting)
+    # plt.figure()
+    # plt.plot(tune_unit, normalize_to_01(psd), label="sum")
+    # plt.plot(tune_unit, normalize_to_01(q_prev_queue.psd), label="ref")
+    # plt.legend()
+    # plt.show()
+    print(f"qx:{qx}, q_ref:{q_ref}, q_predicted:{q_pred}, q_measured:{q_measured}, confidence:{q_confidence * 100}%, peak_detection:{q_peak_detection}, curve_fitting:{q_curve_fitting}")
 
-plot([qx_list, q_measured_list, peak_detection_list])
+plot([qx_list, q_ref_list, q_predicted_list, q_measured_list, peak_detection_list, cf_list])
 res_dic = {'qx': qx_list,
+           'q_ref': q_ref_list,
+           'q_predicted': q_predicted_list,
            'q_measured': q_measured_list,
-           'peak_detection': peak_detection_list}
+           'peak_detection': peak_detection_list,
+           'curve_fitting': cf_list}
 with open(f"random_sum.pkl", "wb") as f:
     pickle.dump(res_dic, f, protocol=pickle.HIGHEST_PROTOCOL)
 
