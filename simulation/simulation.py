@@ -172,12 +172,13 @@ plt.plot(peak_detection_list, label='peak detection')
 plt.plot(cf_list, label='curve fitting')
 plt.legend()
 plt.show()
-res_dic = {'qx': qx_list,
-           'q_ref': q_ref_list,
-           'q_predicted': q_predicted_list,
-           'q_measured': q_measured_list,
-           'peak_detection': peak_detection_list,
-           'curve_fitting': cf_list}
+dic = {'qx': qx_list,
+       'q_ref': q_ref_list,
+       'q_predicted': q_predicted_list,
+       'q_measured': q_measured_list,
+       'peak_detection': peak_detection_list,
+       'curve_fitting': cf_list}
+plot_measured_results(dic=dic)
 with open(f"{method}_sum.pkl", "wb") as f:
-    pickle.dump(res_dic, f, protocol=pickle.HIGHEST_PROTOCOL)
+    pickle.dump(dic, f, protocol=pickle.HIGHEST_PROTOCOL)
 

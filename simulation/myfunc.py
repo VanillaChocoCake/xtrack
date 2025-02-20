@@ -8,7 +8,26 @@ from scipy.ndimage import gaussian_filter1d
 from scipy.interpolate import interp1d
 from scipy.optimize import curve_fit
 import bisect
+import pickle
 
+
+def plot_measured_results(dic: dict=None, filename: str=None):
+    if dic is None and filename is None:
+        raise ValueError("Either dictionary that stored results or filename must be provided")
+    if dic is None:
+        with open(filename, "rb") as f:
+            dic = pickle.load(f)
+    plt.figure()
+    plt.plot(dic['qx'], label='nominal')
+    plt.plot(dic['qx'] + 0.01, label='nominal + 0.01')
+    plt.plot(dic['qx'] - 0.01, label='nominal - 0.01')
+    plt.plot(dic['q_ref'], 'o', label='reference', markersize=1)
+    plt.plot(dic['q_predicted'], 'v', label='predicted', markersize=1)
+    plt.plot(dic['q_measured'], 's', label='measured', markersize=1)
+    # plt.plot(dic['peak_detection'], '*', label='peak detection', markersize=1)
+    plt.plot(dic['curve_fitting'], 'p', label='curve fitting', markersize=1)
+    plt.legend()
+    plt.show()
 
 def find_closest_values(a: float, b: np.ndarray) -> tuple:
     """
