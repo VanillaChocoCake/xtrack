@@ -126,15 +126,7 @@ def plot(data):
 #     tune_unit = freqs[(freqs / f_rev >= lower_limit) & (freqs / f_rev <= upper_limit)] / f_rev
 #     return tune_unit, psd_s
 
-def cal_psd(
-        x_data: np.ndarray,
-        batch_size: int,
-        f_sampling: float,
-        window_size: int,
-        f_rev: float,
-        tune_unit_lower_limit: float,
-        tune_unit_upper_limit: float
-) -> tuple[np.ndarray, np.ndarray]:
+def cal_psd(x_data: np.ndarray, batch_size: int, f_sampling: float, window_size: int, f_rev: float, tune_unit_lower_limit: float, tune_unit_upper_limit: float) -> tuple[np.ndarray, np.ndarray]:
     """
     优化版PSD计算函数，性能提升3-5倍
 
