@@ -168,6 +168,6 @@ res_dic = {'qx': qx_list,
            'q_measured': q_measured_list,
            'peak_detection': peak_detection_list,
            'curve_fitting': cf_list}
-with open(f"random_sum.pkl", "wb") as f:
+with open(f"{method}_sum.pkl", "wb") as f:
     pickle.dump(res_dic, f, protocol=pickle.HIGHEST_PROTOCOL)
 
