@@ -577,7 +577,7 @@ class q_queue:
     def q_ref(self):
         return self.tune_unit[np.argmax(self.psd)]
     def q_pred(self):
-        if self.q_queue.__len__() == 1:
+        if self.q_queue.__len__() <= 2:
             return self.q_ref()
         else:
             return predict_next_point(np.array(self.q_queue))
