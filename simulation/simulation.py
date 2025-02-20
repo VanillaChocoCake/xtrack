@@ -163,15 +163,6 @@ for i in range(len(qx_list)):
     # plt.show()
     print(f"qx:{qx}, q_ref:{q_ref}, q_predicted:{q_pred}, q_measured:{q_measured}, confidence:{q_confidence * 100}%, peak_detection:{q_peak_detection}, curve_fitting:{q_curve_fitting}")
 
-plt.figure()
-plt.plot(qx_list, label='nominal')
-plt.plot(q_ref_list, label='reference')
-plt.plot(q_predicted_list, label='predicted')
-plt.plot(q_measured_list, label='measured')
-plt.plot(peak_detection_list, label='peak detection')
-plt.plot(cf_list, label='curve fitting')
-plt.legend()
-plt.show()
 dic = {'qx': qx_list,
        'q_ref': q_ref_list,
        'q_predicted': q_predicted_list,
