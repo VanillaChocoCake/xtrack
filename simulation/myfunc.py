@@ -10,6 +10,39 @@ from scipy.optimize import curve_fit
 import bisect
 import pickle
 
+def covered_by_detector(central_frequency: float,
+                        bandwidth: float,
+                        sideband_width: float,
+                        tune: float, current_frequency: float) -> (np.ndarray, np.ndarray):
+    fl = central_frequency - bandwidth/2
+    fh = central_frequency + bandwidth/2
+    harmonic = np.round(central_frequency/current_frequency)
+    tune_covered_lower = (((harmonic - tune)*current_frequency - sideband_width/2 > fl) &
+                          ((harmonic - tune)*current_frequency + sideband_width/2 < fh))
+    tune_covered_upper = (((harmonic + tune)*current_frequency - sideband_width/2 > fl) &
+                          ((harmonic + tune)*current_frequency + sideband_width/2 < fh))
+    return tune_covered_lower | tune_covered_upper
+
+def covered_frequency_bands_minmax(central_frequency: float,
+                                   bandwidth: float,
+                                   sideband_width: float,
+                                   tune_min: float, tune_max: float,
+                                   start_frequency: float, end_frequency: float, step: float=0.01e6) -> (np.ndarray, np.ndarray):
+    fl = central_frequency - bandwidth/2
+    fh = central_frequency + bandwidth/2
+    frequency_bands = np.linspace(start_frequency, end_frequency, num=int((end_frequency - start_frequency)/step + 1))
+    harmonic = np.round(central_frequency/frequency_bands)
+    tune_min_covered_lower = (((harmonic - tune_min)*frequency_bands - sideband_width/2 > fl) &
+                              ((harmonic - tune_min)*frequency_bands + sideband_width/2 < fh))
+    tune_min_covered_upper = (((harmonic + tune_min)*frequency_bands - sideband_width/2 > fl) &
+                              ((harmonic + tune_min)*frequency_bands + sideband_width/2 < fh))
+    tune_max_covered_lower = (((harmonic - tune_max)*frequency_bands - sideband_width/2 > fl) &
+                              ((harmonic - tune_max)*frequency_bands + sideband_width/2 < fh))
+    tune_max_covered_upper = (((harmonic + tune_max)*frequency_bands - sideband_width/2 > fl) &
+                              ((harmonic + tune_max)*frequency_bands + sideband_width/2 < fh))
+    tune_min_covered = tune_min_covered_lower | tune_min_covered_upper
+    tune_max_covered = tune_max_covered_lower | tune_max_covered_upper
+    return frequency_bands, tune_min_covered & tune_max_covered
 
 def plot_measured_results(dic: dict=None, filename: str=None):
     if dic is None and filename is None:
@@ -57,8 +90,7 @@ def find_closest_values(a: float, b: np.ndarray) -> tuple:
 
     return lower, upper
 
-
-def gaussian_peak_fit(x, y):
+def gaussian_peak_fit(x: np.ndarray, y: np.ndarray) -> float:
     """
     高斯函数拟合
     参数：
@@ -85,7 +117,7 @@ def gaussian_peak_fit(x, y):
         print("拟合失败，返回最大值位置")
         return x0_guess
 
-def generate_q_list(method, n_points, lower_limit, upper_limit):
+def generate_q_list(method: str, n_points: int, lower_limit: float, upper_limit: float) -> np.ndarray:
     x = np.linspace(0, 1, num=n_points)
     if method == "sin" or method == "cos":
         q_list = (upper_limit - lower_limit)*0.5*np.sin(2*np.pi*x)
@@ -101,32 +133,17 @@ def generate_q_list(method, n_points, lower_limit, upper_limit):
         q_list = (upper_limit + lower_limit)*0.5*np.ones_like(x)
     return q_list
 
-def plot(data):
+def plot(x: np.ndarray, y: np.ndarray):
     plt.figure()
-    for d in data:
-        plt.plot(d)
+    plt.plot(x, y)
     plt.show()
 
-# def cal_psd(x_data, batch_size, f_sampling, window_size, f_rev, lower_limit, upper_limit):
-#     psd_s = 0
-#     for j in range(x_data.shape[0]):
-#         # 计算FFT
-#         X = fft(x_data[j, :])
-#         # fftshift将零频分量移到中心
-#         X_shifted = fftshift(X)
-#         # 生成频率轴，从-f_sampling/2到f_sampling/2
-#         # 计算PSD（归一化方法可根据实际需要调整）
-#         psd_j = np.abs(X_shifted) ** 2 / (batch_size * f_sampling)
-#         # psd_j = sgolay_filter(psd_j, window_size-2, 4)
-#         psd_j = gaussian_filter(psd_j, window_size)
-#         freqs, psd_j = fold_spectrum(psd_j, f_rev, f_sampling)
-#         psd_j = psd_j[(freqs / f_rev >= lower_limit) & (freqs / f_rev <= upper_limit)]
-#         psd_s += psd_j
-#     psd_s -= min(psd_s)
-#     tune_unit = freqs[(freqs / f_rev >= lower_limit) & (freqs / f_rev <= upper_limit)] / f_rev
-#     return tune_unit, psd_s
-
-def cal_psd(x_data: np.ndarray, batch_size: int, f_sampling: float, window_size: int, f_rev: float, tune_unit_lower_limit: float, tune_unit_upper_limit: float) -> tuple[np.ndarray, np.ndarray]:
+def cal_psd(x_data: np.ndarray,
+            batch_size: int,
+            f_sampling: float,
+            window_size: int,
+            f_rev: float,
+            tune_unit_lower_limit: float, tune_unit_upper_limit: float) -> tuple[np.ndarray, np.ndarray]:
     """
     优化版PSD计算函数，性能提升3-5倍
 
@@ -204,15 +221,13 @@ def cal_psd(x_data: np.ndarray, batch_size: int, f_sampling: float, window_size:
 
     return final_tune_unit, final_psd
 
-def windowed_reshape(arr, batch_size):
+def windowed_reshape(arr: np.ndarray, batch_size: int) -> np.ndarray:
     """
     将一维数组分批次并应用汉明窗
     :param arr: 输入一维数组
     :param batch_size: 每个批次的大小
     :return: 二维数组（批次 x batch_size），每个批次已加窗
     """
-    # 转换为numpy数组
-    arr = np.asarray(arr)
 
     # 计算需要补零的数量
     n = arr.size
@@ -225,7 +240,7 @@ def windowed_reshape(arr, batch_size):
     window = hamming(batch_size)
     return reshaped*window
 
-def predict_next_point(x_data):
+def predict_next_point(x_data: np.ndarray) -> float:
     """
     使用线性回归预测时间序列的下一个点
 
@@ -257,7 +272,8 @@ def predict_next_point(x_data):
     # 预测下一个时间点的值
     return slope * len(x) + intercept
 
-def apply_bandpass_filter(x_data, fs, lowcut, highcut, order=5):
+def apply_bandpass_filter(x_data: np.ndarray, fs: float,
+                          lowcut: float, highcut: float, order: int=5) -> np.ndarray:
     """
     应用带通滤波器，保留37-40MHz频段信号。
 
@@ -279,7 +295,7 @@ def apply_bandpass_filter(x_data, fs, lowcut, highcut, order=5):
 
     return filtered_data
 
-def generate_noisy_signal(x_data, snr_db):
+def generate_noisy_signal(x_data: np.ndarray, snr_db: float) -> np.ndarray:
     """
     生成满足指定信噪比的高斯噪声，并计算缩放系数a
     :param x_data: 原始信号（一维数组）
@@ -304,7 +320,7 @@ def generate_noisy_signal(x_data, snr_db):
 
     return noisy_signal
 
-def normalize_to_01(x_data):
+def normalize_to_01(x_data: np.ndarray) -> np.ndarray:
     """
     将输入的数据 x_data 正则化到 [0, 1] 范围内。
 
@@ -331,7 +347,7 @@ def normalize_to_01(x_data):
 
     return normalized_data + 1
 
-def sgolay_filter(data, window_length, polyorder=4, mode='nearest'):
+def sgolay_filter(data: np.ndarray, window_length: int, polyorder: int=4, mode: str='nearest') -> np.ndarray:
     """
     Savitzky-Golay滤波器实现
 
@@ -352,7 +368,7 @@ def sgolay_filter(data, window_length, polyorder=4, mode='nearest'):
 
     return savgol_filter(data, window_length, polyorder, mode=mode)
 
-def fold_spectrum(spectrum, f_rev, f_sampling):
+def fold_spectrum(spectrum: np.ndarray, f_rev: float, f_sampling: float) -> tuple[np.ndarray, np.ndarray]:
     """
     将宽频PSD频谱折叠到0~f_rev基带
 
@@ -424,7 +440,7 @@ def fold_spectrum(spectrum, f_rev, f_sampling):
     base_freqs = np.linspace(0, f_rev / 2, len(folded_psd), endpoint=False)
     return base_freqs, folded_psd
 
-def gaussian_filter(x_data, window_size):
+def gaussian_filter(x_data: np.ndarray, window_size: int) -> np.ndarray:
     """
     对一维信号进行高斯滤波
     :param x_data: 输入信号（list或np.array）
@@ -449,111 +465,19 @@ def gaussian_filter(x_data, window_size):
     # 执行滤波（边界处理模式可调整）
     return gaussian_filter1d(x, sigma=sigma, truncate=truncate, mode='nearest')
 
-def find_local_maxima(psd):
+def find_local_maxima(psd: np.ndarray) -> (list ,list):
     psd = np.asarray(psd, dtype=np.float64)
     index_bool = np.zeros(len(psd), dtype=bool)
     index_value, _ = find_peaks(psd)
     index_bool[index_value] = True
     return index_bool.tolist(), index_value
 
-def find_local_minima(psd):
+def find_local_minima(psd: np.ndarray) -> (list ,list):
     psd = np.asarray(-psd, dtype=np.float64)
     index_bool = np.zeros(len(psd), dtype=bool)
     index_value, _ = find_peaks(psd)
     index_bool[index_value] = True
     return index_bool.tolist(), index_value
-
-# def find_local_maxima(x_data, include_edges=True, plateau_detection=True):
-#     """
-#     生成一维数据的局部极大值布尔掩码
-#     :param x_data: 输入一维数据（支持list/np.array）
-#     :param include_edges: 是否包含边界点（默认为True）
-#     :param plateau_detection: 是否检测平台极大值（默认为False）
-#     :return: 布尔掩码数组（True表示对应位置是极大值）
-#     """
-#     x = np.asarray(x_data)
-#     n = len(x)
-#     mask = np.zeros(n, dtype=bool)
-#
-#     # 处理短数据情况
-#     if n < 3:
-#         if n == 1:
-#             mask[0] = include_edges
-#         elif n == 2:
-#             if include_edges:
-#                 mask[np.argmax(x)] = True
-#
-#         return mask.tolist(), [i for i, val in enumerate(mask) if val]
-#
-#     # 核心极大值检测逻辑
-#     if plateau_detection:
-#         left = x[:-2]
-#         center = x[1:-1]
-#         right = x[2:]
-#
-#         strict_max = (center > left) & (center > right)
-#         plateau_start = (center >= left) & (center > right)
-#         plateau_end = (center > left) & (center >= right)
-#         maxima_mid = strict_max | plateau_start | plateau_end
-#     else:
-#         maxima_mid = (x[1:-1] > x[:-2]) & (x[1:-1] > x[2:])
-#
-#     mask[1:-1] = maxima_mid
-#
-#     # 处理边界点
-#     if include_edges:
-#         if x[0] > x[1]:
-#             mask[0] = True
-#         if x[-1] > x[-2]:
-#             mask[-1] = True
-#
-#     return mask.tolist(), [i for i, val in enumerate(mask) if val]
-#
-# def find_local_minima(x_data, include_edges=True, plateau_detection=True):
-#     """
-#     生成一维数据的局部极小值布尔掩码
-#     :param x_data: 输入一维数据（支持list/np.array）
-#     :param include_edges: 是否包含边界点（默认为True）
-#     :param plateau_detection: 是否检测平台极小值（默认为False）
-#     :return: 布尔掩码数组（True表示对应位置是极小值）
-#     """
-#     x = np.asarray(x_data)
-#     n = len(x)
-#     mask = np.zeros(n, dtype=bool)
-#
-#     # 处理短数据情况
-#     if n < 3:
-#         if n == 1:
-#             mask[0] = include_edges
-#         elif n == 2:
-#             if include_edges:
-#                 mask[np.argmin(x)] = True
-#
-#         return mask.tolist(), [i for i, val in enumerate(mask) if val]
-#
-#     # 核心极大值检测逻辑
-#     if plateau_detection:
-#         left = x[:-2]
-#         center = x[1:-1]
-#         right = x[2:]
-#
-#         strict_min = (center < left) & (center < right)
-#         plateau_start = (center <= left) & (center < right)
-#         plateau_end = (center < left) & (center <= right)
-#         minima_mid = strict_min | plateau_start | plateau_end
-#     else:
-#         minima_mid = (x[1:-1] < x[:-2]) & (x[1:-1] < x[2:])
-#
-#     mask[1:-1] = minima_mid
-#
-#     # 处理边界点
-#     if include_edges:
-#         if x[0] < x[1]:
-#             mask[0] = True
-#         if x[-1] < x[-2]:
-#             mask[-1] = True
-#
-#     return mask.tolist(), [i for i, val in enumerate(mask) if val]
 
 from collections import deque
 
@@ -561,7 +485,7 @@ class q_queue:
     def __init__(self, max_len, decay_factor=0.85):
         self.max_len = max_len
         self.q_queue = deque(maxlen=max_len)
-        self.q_queue.extend(np.zeros(self.max_len))
+        # self.q_queue.extend(np.zeros(self.max_len))
         self.decay_factor = decay_factor
         self.first_append = True
         self.psd = []

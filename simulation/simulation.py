@@ -1,19 +1,20 @@
 import matplotlib.pyplot as plt
+import numpy as np
 
 import xtrack as xt
 import xpart as xp
 import xobjects as xo
 from parameters import SynchrotronConfiguration, DetectorConfiguration
 from myfunc import *
-import warnings
+import shutup
 import pickle
 import scipy.constants as sc
 
-warnings.filterwarnings("ignore")
+shutup.please()
 context = xo.ContextCpu(omp_num_threads="auto")
 config = SynchrotronConfiguration()
 detector = DetectorConfiguration()
-f_rev_range = np.linspace(0, 3.5, num=351)
+sideband_width = 500e3
 f_rev_increase_rate = 10e6
 min_track_turns = 100
 snr = -20
@@ -30,16 +31,22 @@ if config.qy > 0.5:
     qy = 1 - config.qy
 else:
     qy = config.qy
-qx_list = generate_q_list(method, 351, qx - 0.09, qx + 0.09)
-qy_list = generate_q_list(method, 351, qy - 0.09, qy + 0.09)
+upper_limit = qx + 0.1
+lower_limit = qx - 0.1
+f_rev_range, covered_frequency_bands \
+    = covered_frequency_bands_minmax(central_frequency=detector.fc, bandwidth=detector.bandwidth,
+                              tune_min=lower_limit, tune_max=upper_limit,
+                              sideband_width=sideband_width,
+                              start_frequency=4e6, end_frequency=7.5e6, step=0.01e6)
+qx_list = generate_q_list(method, len(f_rev_range), qx - 0.09, qx + 0.09)
+qy_list = generate_q_list(method, len(f_rev_range), qy - 0.09, qy + 0.09)
 q_ref_list = []
 q_measured_list = []
 q_predicted_list = []
 peak_detection_list = []
 cf_list = []
+failed_to_detect = np.zeros_like(f_rev_range, dtype=bool)
 alpha = 0.45
-upper_limit = qx + 0.1
-lower_limit = qx - 0.1
 # for i in range(len(f_rev_range)):
 for i in range(len(qx_list)):
     qy = qy_list[i]
@@ -56,7 +63,8 @@ for i in range(len(qx_list)):
                              dqx=config.dqx, dqy=config.dqy,
                              )
     # f_rev = (4 + f_rev_range[i]) * 1e6
-    f_rev = 7.5e6
+    f_rev = f_rev_range[i]
+    print("f_rev:", f_rev)
     # schottky_harmonic = int(np.round(detector.fc / f_rev))
     schottky_harmonic = 6
     f_sampling = 2 * (1 + 1) * f_rev
@@ -65,7 +73,7 @@ for i in range(len(qx_list)):
     band_width = detector.bandwidth / f_rev
     freq_res = f_sampling / batch_size
     deltaQ = freq_res / f_rev
-    side_point_num = np.ceil(500e3 / (2 * freq_res))
+    side_point_num = np.ceil(sideband_width / (2 * freq_res))
     window_size = max(3, 2 * np.floor(side_point_num/6) - 1)
     n_turns = int(np.floor(f_rev * simulation_time / min_track_turns) * min_track_turns)
 
@@ -130,9 +138,10 @@ for i in range(len(qx_list)):
     try:
         q_ref = q_prev_queue.q_ref()
         assert q_ref > 0
+        q_pred = q_prev_queue.q_pred()
     except:
         q_ref = np.mean(tune_unit[index_bool_maxima])
-    q_pred = q_prev_queue.q_pred()
+        q_pred = q_ref
     q_ref_list.append(q_ref)
     q_predicted_list.append(q_pred)
     distance = normalize_to_01(abs(tune_unit[index_bool_maxima] - (q_ref + q_pred)/2)) - 1
@@ -143,6 +152,12 @@ for i in range(len(qx_list)):
     q_confidence = max(confidence)
     if q_confidence >= 0.95:
         alpha = max(0.1, alpha - 0.01)
+    if not covered_by_detector(central_frequency=detector.fc, bandwidth=detector.bandwidth,
+                           sideband_width=sideband_width,
+                           tune=q_measured, current_frequency=f_rev):
+        q_measured = (q_pred + q_ref)/2
+        failed_to_detect[i] = True
+        print(f"Betatron tune can not be measured at this frequency, replaced by (q_pred + q_ref)/2={q_measured}.")
     q_prev_queue.append(q_measured, tune_unit, psd)
     q_measured_list.append(q_measured)
     q_peak_detection = tune_unit[index_bool_maxima][np.argmax(weight_amplitude)]
@@ -156,11 +171,11 @@ for i in range(len(qx_list)):
                       closest_minima[1]]))
     q_curve_fitting = gaussian_peak_fit(tune_unit[cf_start:cf_end], psd[cf_start:cf_end])
     cf_list.append(q_curve_fitting)
-    # plt.figure()
-    # plt.plot(tune_unit, normalize_to_01(psd), label="sum")
-    # plt.plot(tune_unit, normalize_to_01(q_prev_queue.psd), label="ref")
-    # plt.legend()
-    # plt.show()
+    plt.figure()
+    plt.plot(tune_unit, normalize_to_01(psd), label="sum")
+    plt.plot(tune_unit, normalize_to_01(q_prev_queue.psd), label="ref")
+    plt.legend()
+    plt.show()
     print(f"qx:{qx}, q_ref:{q_ref}, q_predicted:{q_pred}, q_measured:{q_measured}, confidence:{q_confidence * 100}%, peak_detection:{q_peak_detection}, curve_fitting:{q_curve_fitting}")
 
 dic = {'qx': qx_list,
@@ -168,7 +183,8 @@ dic = {'qx': qx_list,
        'q_predicted': q_predicted_list,
        'q_measured': q_measured_list,
        'peak_detection': peak_detection_list,
-       'curve_fitting': cf_list}
+       'curve_fitting': cf_list,
+       'failed_to_detect': failed_to_detect}
 plot_measured_results(dic=dic)
 with open(f"{method}_sum.pkl", "wb") as f:
     pickle.dump(dic, f, protocol=pickle.HIGHEST_PROTOCOL)
