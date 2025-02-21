@@ -10,6 +10,37 @@ from scipy.optimize import curve_fit
 import bisect
 import pickle
 
+# def exclude_coherent_spectrum(tune_unit: np.ndarray, spectrum: np.ndarray, qx: float, side_point_num: int) -> np.ndarray:
+#     # 找到与 qx 最接近的两个值
+#     left, right = find_closest_values(qx, tune_unit)
+#     coherent_peak = left if np.abs(qx - left) < np.abs(qx - right) else right
+#     coherent_peak_index = np.where(tune_unit == coherent_peak)[0][0]
+#     # 计算排除的范围
+#     exclude_range = max(1, int(side_point_num/8))
+#     start = int(max(0, coherent_peak_index - exclude_range))
+#     stop = int(min(len(spectrum) - 1, coherent_peak_index + exclude_range))  # 修正索引范围
+#     start_left = int(max(0, coherent_peak_index - side_point_num))
+#     stop_right = int(min(len(spectrum) - 1, coherent_peak_index + side_point_num))
+#     fit_mask = ((tune_unit >= tune_unit[start_left]) & (tune_unit <= tune_unit[stop_right])) & ((tune_unit < tune_unit[start]) | (tune_unit > tune_unit[stop]))
+#     fit_tune_unit = tune_unit[fit_mask]
+#     fit_spectrum = spectrum[fit_mask]
+#     a, x0, phi = gaussian_peak_fit(fit_tune_unit, fit_spectrum)
+#     spectrum[start: stop + 1] = gaussian_function(tune_unit[start:stop + 1], a, x0, phi)
+#     return spectrum
+#
+# def exclude_coherent_signal(t: np.ndarray, y: np.ndarray, frequency: float, exclude_coherent:bool=False) -> np.ndarray:
+#     def harmonic_model(t, A, f, phi):
+#         return A * np.sin(2 * np.pi * f * t + phi)
+#     if exclude_coherent:
+#         p0 = [max(y), frequency, 0]
+#         params, _ = curve_fit(harmonic_model, xdata=t, ydata=y, p0=p0)
+#         A_fit, f_fit, phi_fit = params
+#         fitted_harmonic = harmonic_model(t, A_fit, f_fit, phi_fit)
+#         residual_signal = y - fitted_harmonic
+#         return residual_signal
+#     else:
+#         return y
+
 def covered_by_detector(central_frequency: float,
                         bandwidth: float,
                         sideband_width: float,
@@ -90,6 +121,9 @@ def find_closest_values(a: float, b: np.ndarray) -> tuple:
 
     return lower, upper
 
+def gaussian_function(x, a, x0, sigma):
+    return a * np.exp(-(x - x0) ** 2 / (2 * sigma ** 2))
+
 def gaussian_peak_fit(x: np.ndarray, y: np.ndarray) -> float:
     """
     高斯函数拟合
@@ -99,10 +133,7 @@ def gaussian_peak_fit(x: np.ndarray, y: np.ndarray) -> float:
     返回：
         float: 峰值位置x值
     """
-
-    # 定义高斯函数模型
-    def _gaussian(x, a, x0, sigma):
-        return a * np.exp(-(x - x0) ** 2 / (2 * sigma ** 2))
+    
 
     # 初始参数猜测
     max_idx = np.argmax(y)
@@ -111,11 +142,11 @@ def gaussian_peak_fit(x: np.ndarray, y: np.ndarray) -> float:
     sigma_guess = (x[-1] - x[0]) / 4  # 假设数据覆盖约4σ范围
 
     try:
-        popt, _ = curve_fit(_gaussian, x, y, p0=[a_guess, x0_guess, sigma_guess])
-        return popt[1]
+        popt, _ = curve_fit(gaussian_function, x, y, p0=[a_guess, x0_guess, sigma_guess])
+        return popt
     except:
         print("拟合失败，返回最大值位置")
-        return x0_guess
+        return a_guess, x0_guess, sigma_guess
 
 def generate_q_list(method: str, n_points: int, lower_limit: float, upper_limit: float) -> np.ndarray:
     x = np.linspace(0, 1, num=n_points)
@@ -141,12 +172,20 @@ def plot(x: np.ndarray, y: np.ndarray):
     plt.plot(x, y)
     plt.show()
 
-def cal_psd(x_data: np.ndarray,
+def cal_psd_normal(data: np.ndarray, f_sampling: float) -> tuple[np.ndarray, np.ndarray]:
+    full_freqs = fftshift(np.fft.fftfreq(len(data), 1/f_sampling))
+    psd = fft(data)
+    psd = fftshift(psd)
+    psd = np.abs(psd) ** 2 / (len(psd) * f_sampling)
+    return full_freqs, psd
+
+def cal_psd(x_data: np.ndarray, noise: np.ndarray,
             batch_size: int,
             f_sampling: float,
             window_size: int,
             f_rev: float,
-            tune_unit_lower_limit: float, tune_unit_upper_limit: float) -> tuple[np.ndarray, np.ndarray]:
+            tune_unit_lower_limit: float, tune_unit_upper_limit: float, tune: float,
+            side_point_num: int, exclude_coherent:bool=True) -> tuple[np.ndarray, np.ndarray]:
     """
     优化版PSD计算函数，性能提升3-5倍
 
@@ -169,18 +208,13 @@ def cal_psd(x_data: np.ndarray,
     # 预计算全局参数 (避免循环内重复计算)
     # ==================================================================
     # 生成完整频率轴 (只计算一次)
-    full_freqs = fftshift(np.fft.fftfreq(batch_size, 1 / f_sampling))
-
-    # 预计算折叠参数 (假设所有batch的折叠参数相同)
-    _, first_folded_psd = fold_spectrum(
-        np.empty(batch_size),  # 空数组仅用于获取频率轴
-        f_rev,
-        f_sampling
-    )
-    valid_length = len(first_folded_psd)
+    base_freqs, _ = fold_spectrum(np.empty(batch_size), f_rev, f_sampling)
+    tune_unit = base_freqs / f_rev
+    freq_mask = (tune_unit >= tune_unit_lower_limit) & (tune_unit <= tune_unit_upper_limit)
+    final_tune_unit = tune_unit[freq_mask]
 
     # 预分配内存
-    psd_matrix = np.zeros((num_batches, valid_length), dtype=np.float64)
+    psd_matrix = np.zeros((num_batches, len(tune_unit)), dtype=np.float64)
 
     # ==================================================================
     # 批量处理核心流程 (向量化+内存连续优化)
@@ -192,28 +226,36 @@ def cal_psd(x_data: np.ndarray,
     # 批量PSD计算
     psd_all = np.abs(spectra_shifted) ** 2 / (batch_size * f_sampling)
 
-    # 批量滤波和折叠 (需保留循环但优化内存访问)
-    for i in range(num_batches):
-        # 应用高斯滤波
-        filtered = gaussian_filter(psd_all[i], window_size)
-
-        # 频谱折叠
-        _, folded = fold_spectrum(filtered, f_rev, f_sampling)
-
-        # 存储结果
-        psd_matrix[i] = folded
+    if exclude_coherent:
+        # spectra_noise = fft(noise, axis=1)
+        # spectra_noise_shifted = fftshift(spectra_noise, axes=1)
+        # psd_noise_all = np.abs(spectra_noise_shifted) ** 2 / (batch_size * f_sampling)
+        # # 批量滤波和折叠 (需保留循环但优化内存访问)
+        # for i in range(num_batches):
+        #     # 频谱折叠
+        #     _, folded = fold_spectrum(psd_all[i], f_rev, f_sampling)
+        #     folded = folded[freq_mask]
+        #     folded = exclude_coherent_spectrum(final_tune_unit, folded, tune, side_point_num)
+        #     psd_noise = psd_noise_all[i, 0: len(folded)]
+        #     psd_matrix[i] = folded + psd_noise
+        pass
+    else:
+        # 批量滤波和折叠 (需保留循环但优化内存访问)
+        for i in range(num_batches):
+            # 频谱折叠
+            filtered = gaussian_filter(psd_all[i], window_size)
+            _, folded = fold_spectrum(filtered, f_rev, f_sampling)
+            psd_matrix[i] = folded
 
     # ==================================================================
     # 频率范围选择 (向量化操作)
     # ==================================================================
     # 获取最终频率轴 (使用第一个有效结果)
-    base_freqs, _ = fold_spectrum(np.empty(batch_size), f_rev, f_sampling)
-    tune_unit = base_freqs / f_rev
-    freq_mask = (tune_unit >= tune_unit_lower_limit) & (tune_unit <= tune_unit_upper_limit)
+
 
     # 应用频率筛选
     final_psd = psd_matrix[:, freq_mask].sum(axis=0)
-    final_tune_unit = tune_unit[freq_mask]
+    # final_psd = gaussian_filter(final_psd, window_size)
 
     # ==================================================================
     # 基线校正优化 (使用分位数替代最小值)
@@ -221,7 +263,6 @@ def cal_psd(x_data: np.ndarray,
     noise_floor = np.percentile(final_psd, 5)  # 使用5%分位数更鲁棒
     final_psd -= noise_floor
     final_psd = np.clip(final_psd, 0, None)  # 确保非负
-
     return final_tune_unit, final_psd
 
 def windowed_reshape(arr: np.ndarray, batch_size: int) -> np.ndarray:
@@ -298,11 +339,12 @@ def apply_bandpass_filter(x_data: np.ndarray, fs: float,
 
     return filtered_data
 
-def generate_noisy_signal(x_data: np.ndarray, snr_db: float) -> np.ndarray:
+def generate_noisy_signal(x_data: np.ndarray, snr_db: float, exclude_coherent:bool=False) -> np.ndarray:
     """
     生成满足指定信噪比的高斯噪声，并计算缩放系数a
     :param x_data: 原始信号（一维数组）
     :param snr_db: 目标信噪比（单位：dB）
+    :param exclude_coherent
     :return: (a, noisy_signal) - 缩放系数和加噪后的信号
     """
     # 生成高斯白噪声
@@ -320,8 +362,10 @@ def generate_noisy_signal(x_data: np.ndarray, snr_db: float) -> np.ndarray:
 
     # 生成加噪后的信号
     noisy_signal = a * x_data + n
-
-    return noisy_signal
+    if exclude_coherent:
+        return a * x_data, n
+    else:
+        return noisy_signal, n
 
 def normalize_to_01(x_data: np.ndarray) -> np.ndarray:
     """
@@ -404,10 +448,10 @@ def fold_spectrum(spectrum: np.ndarray, f_rev: float, f_sampling: float) -> tupl
     # 初始化输出数组
     folded_psd = []
 
-    # 遍历所有频带（正负）
-    for band_idx in range(bands_per_side + 1):
+    # 遍历所有频带
+    for band_idx in range(bands_per_side):
         if band_idx != bands_per_side - 1:
-            continue  # 跳过基带本身
+            continue
         # if band_idx == 0:
         #     continue  # 跳过基带本身
         # 计算当前频带的频率范围
