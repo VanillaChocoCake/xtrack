@@ -13,7 +13,7 @@ import pickle
 def covered_by_detector(central_frequency: float,
                         bandwidth: float,
                         sideband_width: float,
-                        tune: float, current_frequency: float) -> (np.ndarray, np.ndarray):
+                        tune: float, current_frequency: float) -> bool:
     fl = central_frequency - bandwidth/2
     fh = central_frequency + bandwidth/2
     harmonic = np.round(central_frequency/current_frequency)

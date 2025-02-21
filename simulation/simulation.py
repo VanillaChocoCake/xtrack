@@ -153,8 +153,8 @@ for i in range(len(qx_list)):
     if q_confidence >= 0.95:
         alpha = max(0.1, alpha - 0.01)
     if not covered_by_detector(central_frequency=detector.fc, bandwidth=detector.bandwidth,
-                           sideband_width=sideband_width,
-                           tune=q_measured, current_frequency=f_rev):
+                               sideband_width=sideband_width,
+                               tune=q_measured, current_frequency=f_rev):
         q_measured = (q_pred + q_ref)/2
         failed_to_detect[i] = True
         print(f"Betatron tune can not be measured at this frequency, replaced by (q_pred + q_ref)/2={q_measured}.")
