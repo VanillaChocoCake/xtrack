@@ -119,8 +119,11 @@ def gaussian_peak_fit(x: np.ndarray, y: np.ndarray) -> float:
 
 def generate_q_list(method: str, n_points: int, lower_limit: float, upper_limit: float) -> np.ndarray:
     x = np.linspace(0, 1, num=n_points)
-    if method == "sin" or method == "cos":
+    if method == "sin":
         q_list = (upper_limit - lower_limit)*0.5*np.sin(2*np.pi*x)
+        q_list = q_list - min(q_list) + lower_limit
+    elif method == "cos":
+        q_list = (upper_limit - lower_limit)*0.5*np.cos(2*np.pi*x)
         q_list = q_list - min(q_list) + lower_limit
     elif method == "linear":
         q_list = np.linspace(lower_limit, upper_limit, num=n_points)
