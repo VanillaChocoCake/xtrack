@@ -162,6 +162,7 @@ for i in range(len(qx_list)):
                                tune=q_measured, current_frequency=f_rev):
         q_measured = (q_pred + q_ref)/2
         failed_to_detect[i] = True
+        psd = 0
         print(f"Betatron tune can not be measured at this frequency, replaced by (q_pred + q_ref)/2={q_measured}.")
     q_prev_queue.append(q_measured, tune_unit, psd)
     q_measured_list.append(q_measured)
@@ -177,11 +178,11 @@ for i in range(len(qx_list)):
     cf_params = gaussian_peak_fit(tune_unit[cf_start:cf_end], psd[cf_start:cf_end])
     q_curve_fitting = cf_params[1]
     cf_list.append(q_curve_fitting)
-    plt.figure()
-    plt.plot(tune_unit, normalize_to_01(psd), label="sum")
-    plt.plot(tune_unit, normalize_to_01(q_prev_queue.psd), label="ref")
-    plt.legend()
-    plt.show()
+    # plt.figure()
+    # plt.plot(tune_unit, normalize_to_01(psd), label="sum")
+    # plt.plot(tune_unit, normalize_to_01(q_prev_queue.psd), label="ref")
+    # plt.legend()
+    # plt.show()
     print(f"qx:{qx}, q_ref:{q_ref}, q_predicted:{q_pred}, q_measured:{q_measured}, confidence:{q_confidence * 100}%, peak_detection:{q_peak_detection}, curve_fitting:{q_curve_fitting}")
 
 dic = {'qx': qx_list,
