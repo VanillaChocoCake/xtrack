@@ -54,6 +54,8 @@ batch_size = int(2**np.ceil(np.log2(2*schottky_harmonic*np.max(f_rev_range)/min_
 for i in range(len(qx_list)):
     qy = qy_list[i]
     qx = qx_list[i]
+    qx = float(qx)
+    qy = float(qy)
     lmap = xt.LineSegmentMap(length=config.length,
                              qx=qx, qy=qy,
                              betx=config.betx, bety=config.bety,
@@ -133,10 +135,20 @@ for i in range(len(qx_list)):
     # x_data_reshaped = windowed_reshape(x_data_reshaped, batch_size)
     x_data_reshaped = windowed_reshape(x_data, batch_size)
     noise_reshaped = windowed_reshape(noise, batch_size)
-    tune_unit, psd = cal_psd(x_data=x_data_reshaped, noise=noise_reshaped, batch_size=batch_size,
-                             f_sampling=f_sampling, window_size=window_size,f_rev=f_rev,
-                             tune_unit_lower_limit=lower_limit, tune_unit_upper_limit=upper_limit, tune=qx,
-                             side_point_num=side_point_num, exclude_coherent=exclude_coherent)
+    if not covered_by_detector(central_frequency=detector.fc, bandwidth=detector.bandwidth,
+                               sideband_width=sideband_width,
+                               tune=qx, current_frequency=f_rev):
+        tune_unit, psd = cal_psd(x_data=noise_reshaped, noise=noise_reshaped, batch_size=batch_size,
+                                 f_sampling=f_sampling, window_size=window_size, f_rev=f_rev,
+                                 tune_unit_lower_limit=lower_limit, tune_unit_upper_limit=upper_limit, tune=qx,
+                                 side_point_num=side_point_num, exclude_coherent=exclude_coherent)
+        failed_to_detect[i] = True
+        print(f"Betatron tune can not be measured at this frequency.")
+    else:
+        tune_unit, psd = cal_psd(x_data=x_data_reshaped, noise=noise_reshaped, batch_size=batch_size,
+                                 f_sampling=f_sampling, window_size=window_size, f_rev=f_rev,
+                                 tune_unit_lower_limit=lower_limit, tune_unit_upper_limit=upper_limit, tune=qx,
+                                 side_point_num=side_point_num, exclude_coherent=exclude_coherent)
     index_bool_maxima, index_value_maxima= find_local_maxima(psd)
     index_bool_minima, index_value_minima= find_local_minima(psd)
     weight_amplitude = normalize_to_01(psd[index_bool_maxima]) - 1
@@ -157,13 +169,6 @@ for i in range(len(qx_list)):
     q_confidence = max(confidence)
     if q_confidence >= 0.95:
         alpha = max(0.1, alpha - 0.01)
-    if not covered_by_detector(central_frequency=detector.fc, bandwidth=detector.bandwidth,
-                               sideband_width=sideband_width,
-                               tune=q_measured, current_frequency=f_rev):
-        q_measured = (q_pred + q_ref)/2
-        failed_to_detect[i] = True
-        psd = 0
-        print(f"Betatron tune can not be measured at this frequency, replaced by (q_pred + q_ref)/2={q_measured}.")
     q_prev_queue.append(q_measured, tune_unit, psd)
     q_measured_list.append(q_measured)
     q_peak_detection = tune_unit[index_bool_maxima][np.argmax(weight_amplitude)]
@@ -175,14 +180,14 @@ for i in range(len(qx_list)):
     cf_end = int(min([len(tune_unit) - 1,
                       index_value_maxima[q_measured_index] + np.floor(side_point_num/2),
                       closest_minima[1]]))
-    cf_params = gaussian_peak_fit(tune_unit[cf_start:cf_end], psd[cf_start:cf_end])
+    cf_params = gaussian_peak_fit(tune_unit[cf_start:cf_end + 1], psd[cf_start:cf_end + 1])
     q_curve_fitting = cf_params[1]
     cf_list.append(q_curve_fitting)
-    # plt.figure()
-    # plt.plot(tune_unit, normalize_to_01(psd), label="sum")
-    # plt.plot(tune_unit, normalize_to_01(q_prev_queue.psd), label="ref")
-    # plt.legend()
-    # plt.show()
+    plt.figure()
+    plt.plot(tune_unit, normalize_to_01(psd), label="sum")
+    plt.plot(tune_unit, normalize_to_01(q_prev_queue.psd), label="ref")
+    plt.legend()
+    plt.show()
     print(f"qx:{qx}, q_ref:{q_ref}, q_predicted:{q_pred}, q_measured:{q_measured}, confidence:{q_confidence * 100}%, peak_detection:{q_peak_detection}, curve_fitting:{q_curve_fitting}")
 
 dic = {'qx': qx_list,

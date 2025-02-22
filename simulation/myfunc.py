@@ -124,7 +124,7 @@ def find_closest_values(a: float, b: np.ndarray) -> tuple:
 def gaussian_function(x, a, x0, sigma):
     return a * np.exp(-(x - x0) ** 2 / (2 * sigma ** 2))
 
-def gaussian_peak_fit(x: np.ndarray, y: np.ndarray) -> float:
+def gaussian_peak_fit(x: np.ndarray, y: np.ndarray) -> np.ndarray:
     """
     高斯函数拟合
     参数：
@@ -139,14 +139,14 @@ def gaussian_peak_fit(x: np.ndarray, y: np.ndarray) -> float:
     max_idx = np.argmax(y)
     x0_guess = x[max_idx]
     a_guess = y[max_idx]
-    sigma_guess = (x[-1] - x[0]) / 4  # 假设数据覆盖约4σ范围
+    sigma_guess = (x[-1] - x[0]) / 2  # 假设数据覆盖约4σ范围
 
     try:
         popt, _ = curve_fit(gaussian_function, x, y, p0=[a_guess, x0_guess, sigma_guess])
         return popt
     except:
         print("拟合失败，返回最大值位置")
-        return a_guess, x0_guess, sigma_guess
+        return np.array([a_guess, x0_guess, sigma_guess])
 
 def generate_q_list(method: str, n_points: int, lower_limit: float, upper_limit: float) -> np.ndarray:
     x = np.linspace(0, 1, num=n_points)
@@ -339,7 +339,7 @@ def apply_bandpass_filter(x_data: np.ndarray, fs: float,
 
     return filtered_data
 
-def generate_noisy_signal(x_data: np.ndarray, snr_db: float, exclude_coherent:bool=False) -> np.ndarray:
+def generate_noisy_signal(x_data: np.ndarray, snr_db: float, exclude_coherent:bool=False) -> tuple:
     """
     生成满足指定信噪比的高斯噪声，并计算缩放系数a
     :param x_data: 原始信号（一维数组）
@@ -499,18 +499,17 @@ def gaussian_filter(x_data: np.ndarray, window_size: int) -> np.ndarray:
         raise ValueError("窗口大小必须≥3")
     if window_size % 2 == 0:
         window_size += 1
-        print(f"警告：窗口大小自动调整为奇数 {window_size}")
+        print(f"警告：窗口大小自动调整为奇数：{window_size}")
 
     # 转换为numpy数组
     x = np.asarray(x_data, dtype=np.float64)
 
     # 计算高斯核参数
-    truncate = 3.0  # 覆盖99.7%能量
-    radius = (window_size - 1) // 2
-    sigma = radius / truncate
+    truncate = 2.0  # 覆盖95%能量
+    sigma = (window_size - 1)/4
 
     # 执行滤波（边界处理模式可调整）
-    return gaussian_filter1d(x, sigma=sigma, truncate=truncate, mode='nearest')
+    return gaussian_filter1d(x, sigma=sigma, truncate=truncate, mode='mirror')
 
 def find_local_maxima(psd: np.ndarray) -> (list ,list):
     psd = np.asarray(psd, dtype=np.float64)
