@@ -183,11 +183,11 @@ for i in range(len(qx_list)):
     cf_params = gaussian_peak_fit(tune_unit[cf_start:cf_end + 1], psd[cf_start:cf_end + 1])
     q_curve_fitting = cf_params[1]
     cf_list.append(q_curve_fitting)
-    plt.figure()
-    plt.plot(tune_unit, normalize_to_01(psd), label="sum")
-    plt.plot(tune_unit, normalize_to_01(q_prev_queue.psd), label="ref")
-    plt.legend()
-    plt.show()
+    # plt.figure()
+    # plt.plot(tune_unit, normalize_to_01(psd), label="sum")
+    # plt.plot(tune_unit, normalize_to_01(q_prev_queue.psd), label="ref")
+    # plt.legend()
+    # plt.show()
     print(f"qx:{qx}, q_ref:{q_ref}, q_predicted:{q_pred}, q_measured:{q_measured}, confidence:{q_confidence * 100}%, peak_detection:{q_peak_detection}, curve_fitting:{q_curve_fitting}")
 
 dic = {'qx': qx_list,
