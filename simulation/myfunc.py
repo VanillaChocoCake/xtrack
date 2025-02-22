@@ -5,41 +5,63 @@ from scipy import signal
 from scipy.signal import savgol_filter, find_peaks
 from scipy.signal.windows import hamming
 from scipy.ndimage import gaussian_filter1d
-from scipy.interpolate import interp1d
 from scipy.optimize import curve_fit
 import bisect
 import pickle
+from scipy.interpolate import interp1d
+from scipy.interpolate import CubicSpline
+from scipy.interpolate import lagrange
 
-# def exclude_coherent_spectrum(tune_unit: np.ndarray, spectrum: np.ndarray, qx: float, side_point_num: int) -> np.ndarray:
-#     # 找到与 qx 最接近的两个值
-#     left, right = find_closest_values(qx, tune_unit)
-#     coherent_peak = left if np.abs(qx - left) < np.abs(qx - right) else right
-#     coherent_peak_index = np.where(tune_unit == coherent_peak)[0][0]
-#     # 计算排除的范围
-#     exclude_range = max(1, int(side_point_num/8))
-#     start = int(max(0, coherent_peak_index - exclude_range))
-#     stop = int(min(len(spectrum) - 1, coherent_peak_index + exclude_range))  # 修正索引范围
-#     start_left = int(max(0, coherent_peak_index - side_point_num))
-#     stop_right = int(min(len(spectrum) - 1, coherent_peak_index + side_point_num))
-#     fit_mask = ((tune_unit >= tune_unit[start_left]) & (tune_unit <= tune_unit[stop_right])) & ((tune_unit < tune_unit[start]) | (tune_unit > tune_unit[stop]))
-#     fit_tune_unit = tune_unit[fit_mask]
-#     fit_spectrum = spectrum[fit_mask]
-#     a, x0, phi = gaussian_peak_fit(fit_tune_unit, fit_spectrum)
-#     spectrum[start: stop + 1] = gaussian_function(tune_unit[start:stop + 1], a, x0, phi)
-#     return spectrum
-#
-# def exclude_coherent_signal(t: np.ndarray, y: np.ndarray, frequency: float, exclude_coherent:bool=False) -> np.ndarray:
-#     def harmonic_model(t, A, f, phi):
-#         return A * np.sin(2 * np.pi * f * t + phi)
-#     if exclude_coherent:
-#         p0 = [max(y), frequency, 0]
-#         params, _ = curve_fit(harmonic_model, xdata=t, ydata=y, p0=p0)
-#         A_fit, f_fit, phi_fit = params
-#         fitted_harmonic = harmonic_model(t, A_fit, f_fit, phi_fit)
-#         residual_signal = y - fitted_harmonic
-#         return residual_signal
-#     else:
-#         return y
+
+def interpolation(data, interpolate_method: str="cubic", interpolate_coef: float=1) -> np.ndarray:
+    batch_size = len(data)
+    if interpolate_method is not None:
+        freq = np.linspace(0, batch_size - 1, num=batch_size)
+        freq_new = np.linspace(0, batch_size - 1, num=int(interpolate_coef * batch_size))
+        if interpolate_method == "linear":
+            f = interp1d(freq, data)
+        elif interpolate_method == "cubic":
+            f = CubicSpline(freq, data)
+        elif interpolate_method == "lagrange":
+            f = lagrange(freq, data)
+        else:
+            print("Interpolate method not recognized, will use cubic interpolation.")
+            f = CubicSpline(freq, data)
+        psd = f(freq_new)
+    else:
+        psd = data
+    return psd
+
+def exclude_coherent_spectrum(tune_unit: np.ndarray, spectrum: np.ndarray, qx: float, side_point_num: int) -> np.ndarray:
+    # 找到与 qx 最接近的两个值
+    left, right = find_closest_values(qx, tune_unit)
+    coherent_peak = left if np.abs(qx - left) < np.abs(qx - right) else right
+    coherent_peak_index = np.where(tune_unit == coherent_peak)[0][0]
+    # 计算排除的范围
+    exclude_range = max(1, int(side_point_num/8))
+    start = int(max(0, coherent_peak_index - exclude_range))
+    stop = int(min(len(spectrum) - 1, coherent_peak_index + exclude_range))  # 修正索引范围
+    start_left = int(max(0, coherent_peak_index - side_point_num))
+    stop_right = int(min(len(spectrum) - 1, coherent_peak_index + side_point_num))
+    fit_mask = ((tune_unit >= tune_unit[start_left]) & (tune_unit <= tune_unit[stop_right])) & ((tune_unit < tune_unit[start]) | (tune_unit > tune_unit[stop]))
+    fit_tune_unit = tune_unit[fit_mask]
+    fit_spectrum = spectrum[fit_mask]
+    a, x0, phi = gaussian_peak_fit(fit_tune_unit, fit_spectrum)
+    spectrum[start: stop + 1] = gaussian_function(tune_unit[start:stop + 1], a, x0, phi)
+    return spectrum
+
+def exclude_coherent_signal(t: np.ndarray, y: np.ndarray, frequency: float, exclude_coherent:bool=False) -> np.ndarray:
+    def harmonic_model(t, A, f, phi):
+        return A * np.sin(2 * np.pi * f * t + phi)
+    if exclude_coherent:
+        p0 = [max(y), frequency, 0]
+        params, _ = curve_fit(harmonic_model, xdata=t, ydata=y, p0=p0)
+        A_fit, f_fit, phi_fit = params
+        fitted_harmonic = harmonic_model(t, A_fit, f_fit, phi_fit)
+        residual_signal = y - fitted_harmonic
+        return residual_signal
+    else:
+        return y
 
 def covered_by_detector(central_frequency: float,
                         bandwidth: float,
@@ -85,6 +107,7 @@ def plot_measured_results(dic: dict=None, filename: str=None):
     plt.plot(dic['qx'], label='nominal')
     plt.plot(dic['qx'] + 0.01, label='nominal + 0.01')
     plt.plot(dic['qx'] - 0.01, label='nominal - 0.01')
+    plt.plot(dic['failed_to_detect'], label='not covered area')
     plt.plot(dic['q_ref'], 'o', label='reference', markersize=1)
     plt.plot(dic['q_predicted'], 'v', label='predicted', markersize=1)
     plt.plot(dic['q_measured'], 's', label='measured', markersize=1)
@@ -159,17 +182,23 @@ def generate_q_list(method: str, n_points: int, lower_limit: float, upper_limit:
     elif method == "linear":
         q_list = np.linspace(lower_limit, upper_limit, num=n_points)
     elif method == "random":
+        from scipy.interpolate import UnivariateSpline
         y = np.random.uniform(lower_limit, upper_limit, n_points)
-        y = gaussian_filter(y, 2*np.ceil(n_points/10) + 1)
-        f = interp1d(x, y, "cubic")
-        q_list = f(x)
+        f = UnivariateSpline(x, y, s=2, k=3)
+        y = f(x)
+        y -= min(y)
+        y = y/max(y)*(upper_limit - lower_limit) + lower_limit
+        q_list = y
     else:
         q_list = (upper_limit + lower_limit)*0.5*np.ones_like(x)
     return q_list
 
-def plot(x: np.ndarray, y: np.ndarray):
+def plot(x: np.ndarray, y: np.ndarray=None):
     plt.figure()
-    plt.plot(x, y)
+    if y is None:
+        plt.plot(x)
+    else:
+        plt.plot(x, y)
     plt.show()
 
 def cal_psd_normal(data: np.ndarray, f_sampling: float) -> tuple[np.ndarray, np.ndarray]:
@@ -184,16 +213,13 @@ def cal_psd(x_data: np.ndarray, noise: np.ndarray,
             f_sampling: float,
             window_size: int,
             f_rev: float,
-            tune_unit_lower_limit: float, tune_unit_upper_limit: float, tune: float,
-            side_point_num: int, exclude_coherent:bool=True) -> tuple[np.ndarray, np.ndarray]:
+            tune_unit_lower_limit: float, tune_unit_upper_limit: float,
+            interpolate_method: str="cubic", interpolate_coef: float=1,
+            tune: float=None, side_point_num: int=None, exclude_coherent:bool=False,
+            procedure: int=1) -> tuple:
     """
-    优化版PSD计算函数，性能提升3-5倍
-
-    优化点：
-    1. 向量化FFT计算
-    2. 频率轴预计算
-    3. 内存预分配
-    4. 批处理高斯滤波
+    procedure=1: fold -> sum -> filter
+    procedure=2: fold -> filter -> sum
     """
     # ==================================================================
     # 输入验证和预处理
@@ -203,16 +229,17 @@ def cal_psd(x_data: np.ndarray, noise: np.ndarray,
     num_batches, samples = x_data.shape
     if samples != batch_size:
         raise ValueError(f"批次大小不一致 {samples} vs {batch_size}")
+    if interpolate_method is None:
+        interpolate_coef = 1
 
     # ==================================================================
     # 预计算全局参数 (避免循环内重复计算)
     # ==================================================================
     # 生成完整频率轴 (只计算一次)
     base_freqs, _ = fold_spectrum(np.empty(batch_size), f_rev, f_sampling)
-    tune_unit = base_freqs / f_rev
+    tune_unit = base_freqs/f_rev
     freq_mask = (tune_unit >= tune_unit_lower_limit) & (tune_unit <= tune_unit_upper_limit)
     final_tune_unit = tune_unit[freq_mask]
-
     # 预分配内存
     psd_matrix = np.zeros((num_batches, len(tune_unit)), dtype=np.float64)
 
@@ -227,34 +254,43 @@ def cal_psd(x_data: np.ndarray, noise: np.ndarray,
     psd_all = np.abs(spectra_shifted) ** 2 / (batch_size * f_sampling)
 
     if exclude_coherent:
-        # spectra_noise = fft(noise, axis=1)
-        # spectra_noise_shifted = fftshift(spectra_noise, axes=1)
-        # psd_noise_all = np.abs(spectra_noise_shifted) ** 2 / (batch_size * f_sampling)
-        # # 批量滤波和折叠 (需保留循环但优化内存访问)
-        # for i in range(num_batches):
-        #     # 频谱折叠
-        #     _, folded = fold_spectrum(psd_all[i], f_rev, f_sampling)
-        #     folded = folded[freq_mask]
-        #     folded = exclude_coherent_spectrum(final_tune_unit, folded, tune, side_point_num)
-        #     psd_noise = psd_noise_all[i, 0: len(folded)]
-        #     psd_matrix[i] = folded + psd_noise
-        pass
+        spectra_noise = fft(noise, axis=1)
+        spectra_noise_shifted = fftshift(spectra_noise, axes=1)
+        psd_noise_all = np.abs(spectra_noise_shifted) ** 2 / (batch_size * f_sampling)
+        # 批量滤波和折叠 (需保留循环但优化内存访问)
+        for i in range(num_batches):
+            raise ValueError("You haven't debugged this part yet!")
+            psd = psd_all[i]
+            # psd = interpolation(psd, interpolate_method, interpolate_coef)
+            _, folded = fold_spectrum(psd, f_rev, f_sampling)
+            folded = folded[freq_mask]
+            folded = exclude_coherent_spectrum(final_tune_unit, folded, tune, side_point_num)
+            psd_noise = psd_noise_all[i, 0: len(folded)]
+            psd_matrix[i] = folded + psd_noise
     else:
         # 批量滤波和折叠 (需保留循环但优化内存访问)
         for i in range(num_batches):
-            # 频谱折叠
-            filtered = gaussian_filter(psd_all[i], window_size)
-            _, folded = fold_spectrum(filtered, f_rev, f_sampling)
-            psd_matrix[i] = folded
+            psd = psd_all[i]
+            _, folded = fold_spectrum(psd, f_rev, f_sampling)
+            if procedure == 1:
+                # fold -> sum -> filter
+                psd_matrix[i] = folded
+            elif procedure == 2:
+                # fold -> filter -> sum
+                filtered = gaussian_filter(folded, window_size)
+                # filtered = savgol_filter(psd, window_size, 4)
+                psd_matrix[i] = filtered
 
-    # ==================================================================
-    # 频率范围选择 (向量化操作)
-    # ==================================================================
-    # 获取最终频率轴 (使用第一个有效结果)
+    if procedure == 1:
+        # fold -> sum -> filter
+        final_psd = psd_matrix[:, freq_mask].sum(axis=0)
+        final_psd = gaussian_filter(final_psd, window_size)
+    elif procedure == 2:
+        # fold -> filter -> sum
+        final_psd = psd_matrix[:, freq_mask].sum(axis=0)
+    final_psd = interpolation(final_psd, interpolate_method, interpolate_coef)
+    final_tune_unit = np.linspace(final_tune_unit[0], final_tune_unit[-1], num=len(final_psd))
 
-
-    # 应用频率筛选
-    final_psd = psd_matrix[:, freq_mask].sum(axis=0)
     # final_psd = gaussian_filter(final_psd, window_size)
 
     # ==================================================================
@@ -265,7 +301,7 @@ def cal_psd(x_data: np.ndarray, noise: np.ndarray,
     final_psd = np.clip(final_psd, 0, None)  # 确保非负
     return final_tune_unit, final_psd
 
-def windowed_reshape(arr: np.ndarray, batch_size: int) -> np.ndarray:
+def windowed_reshape(arr: np.ndarray, batch_size: int) -> tuple:
     """
     将一维数组分批次并应用汉明窗
     :param arr: 输入一维数组
@@ -282,7 +318,7 @@ def windowed_reshape(arr: np.ndarray, batch_size: int) -> np.ndarray:
     # 重塑并逐行加窗
     reshaped = arr.reshape(-1, batch_size)
     window = hamming(batch_size)
-    return reshaped*window
+    return reshaped*window, batch_size
 
 def predict_next_point(x_data: np.ndarray) -> float:
     """
@@ -394,7 +430,7 @@ def normalize_to_01(x_data: np.ndarray) -> np.ndarray:
 
     return normalized_data + 1
 
-def sgolay_filter(data: np.ndarray, window_length: int, polyorder: int=4, mode: str='nearest') -> np.ndarray:
+def sgolay_filter(data: np.ndarray, window_length: int, polyorder: int=4, mode: str='mirror') -> np.ndarray:
     """
     Savitzky-Golay滤波器实现
 
@@ -415,7 +451,7 @@ def sgolay_filter(data: np.ndarray, window_length: int, polyorder: int=4, mode: 
 
     return savgol_filter(data, window_length, polyorder, mode=mode)
 
-def fold_spectrum(spectrum: np.ndarray, f_rev: float, f_sampling: float) -> tuple[np.ndarray, np.ndarray]:
+def fold_spectrum(spectrum: np.ndarray, f_rev: float, f_sampling: float) -> tuple:
     """
     将宽频PSD频谱折叠到0~f_rev基带
 
@@ -436,14 +472,10 @@ def fold_spectrum(spectrum: np.ndarray, f_rev: float, f_sampling: float) -> tupl
     # 验证输入条件
     assert f_sampling % (2 * f_rev) == 0, "f_sampling必须是f_rev的偶数倍"
 
-    n = len(spectrum)
-    freqs = np.fft.fftshift(np.fft.fftfreq(n, d=1 / f_sampling))  # 生成频率轴
-
+    n = len(spectrum) # 生成频率轴
+    freqs = np.linspace(-f_sampling / 2, f_sampling / 2, n)
     # 计算基本参数
     bands_per_side = int(2*f_sampling / (2 * f_rev))  # 单边半频带数
-    bin_per_band = n // (2 * bands_per_side)  # 每个频带的分箱数
-    base_mask = (freqs >= 0) & (freqs < f_rev/2)  # 基带分箱掩码
-    base_bins = np.where(base_mask)[0]  # 基带分箱索引
 
     # 初始化输出数组
     folded_psd = []
