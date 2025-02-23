@@ -632,52 +632,52 @@ class AdaptiveKalmanFilter:
 
         return self.x
 
-    class SimpleKalmanFilter:
-        def __init__(self, initial_state=0.5, initial_estimate_error=1, process_noise=0.06, measurement_noise=2.6**2):
-            """
-            一维卡尔曼滤波器初始化
-            :param initial_state: 初始状态估计值
-            :param initial_estimate_error: 初始估计误差（协方差）
-            :param process_noise: 过程噪声方差（Q）
-            :param measurement_noise: 测量噪声方差（R）
-            """
-            # 状态量（标量）
-            self.x = initial_state
+class SimpleKalmanFilter:
+    def __init__(self, initial_state=0.5, initial_estimate_error=1, process_noise=0.06, measurement_noise=2.6 ** 2):
+        """
+        一维卡尔曼滤波器初始化
+        :param initial_state: 初始状态估计值
+        :param initial_estimate_error: 初始估计误差（协方差）
+        :param process_noise: 过程噪声方差（Q）
+        :param measurement_noise: 测量噪声方差（R）
+        """
+        # 状态量（标量）
+        self.x = initial_state
 
-            # 估计误差协方差（标量）
-            self.P = initial_estimate_error
+        # 估计误差协方差（标量）
+        self.P = initial_estimate_error
 
-            # 过程噪声协方差（标量）
-            self.Q = process_noise
+        # 过程噪声协方差（标量）
+        self.Q = process_noise
 
-            # 测量噪声协方差（标量）
-            self.R = measurement_noise
+        # 测量噪声协方差（标量）
+        self.R = measurement_noise
 
-            # 状态转移系数（标量）
-            self.F = 1  # 假设系统为恒定模型
+        # 状态转移系数（标量）
+        self.F = 1  # 假设系统为恒定模型
 
-            # 观测系数（标量）
-            self.H = 1  # 直接观测状态量
+        # 观测系数（标量）
+        self.H = 1  # 直接观测状态量
 
-        def predict(self):
-            """ 预测阶段 """
-            # 状态预测（保持恒定模型）
-            self.x = self.F * self.x
-            # 协方差预测
-            self.P = self.F * self.P * self.F + self.Q
-            return self.x
+    def predict(self):
+        """ 预测阶段 """
+        # 状态预测（保持恒定模型）
+        self.x = self.F * self.x
+        # 协方差预测
+        self.P = self.F * self.P * self.F + self.Q
+        return self.x
 
-        def update(self, z):
-            """ 更新阶段 """
-            # 计算卡尔曼增益
-            K = self.P * self.H / (self.H * self.P * self.H + self.R)
+    def update(self, z):
+        """ 更新阶段 """
+        # 计算卡尔曼增益
+        K = self.P * self.H / (self.H * self.P * self.H + self.R)
 
-            # 状态更新
-            self.x = self.x + K * (z - self.H * self.x)
+        # 状态更新
+        self.x = self.x + K * (z - self.H * self.x)
 
-            # 协方差更新
-            self.P = (1 - K * self.H) * self.P
-            return self.x
+        # 协方差更新
+        self.P = (1 - K * self.H) * self.P
+        return self.x
 
 
 class AdaptiveKalmanFilter2D:
