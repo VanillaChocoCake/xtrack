@@ -52,8 +52,8 @@ schottky_harmonic = 2
 batch_size = int(2**np.ceil(np.log2(2*schottky_harmonic*np.max(f_rev_range)/min_freq_res)))
 interpolate_method = "cubic"
 interpolate_coef = 2
-# kf = AdaptiveKalmanFilter(initial_state=qx)
-kf = DualSensorAKF()
+kf = AdaptiveKalmanFilter(initial_state=qx)
+# kf = AdaptiveKalmanFilter2D()
 # batch_size = 4096
 # for i in range(len(f_rev_range)):
 for i in range(len(qx_list)):
@@ -61,7 +61,7 @@ for i in range(len(qx_list)):
     qx = qx_list[i]
     qx = float(qx)
     qy = float(qy)
-    q_measured = 0.5
+    q_measured = 0.3
     lmap = xt.LineSegmentMap(length=config.length,
                              qx=qx, qy=qy,
                              betx=config.betx, bety=config.bety,
@@ -164,16 +164,14 @@ for i in range(len(qx_list)):
     try:
         q_ref = q_prev_queue.q_ref()
         assert q_ref > 0
-        kf.x[0] = q_ref
         # q_pred = q_prev_queue.q_pred()
-        # q_pred = kf.predict_update(q_ref)
+        q_pred = kf.predict_update(q_ref)
     except:
         q_ref = np.mean(tune_unit[index_bool_maxima])
         # q_pred = q_ref
-        # q_pred = kf.predict_update(q_measured)
-    kf.predict()
-    kf.update(q_ref, q_measured)
-    q_pred = kf.x[0, 0]
+        q_pred = kf.predict_update(q_measured)
+    # kf.predict()
+    # q_pred = kf.update(0.5*q_measured + 0.5*q_ref)[0][0]
     q_ref_list.append(q_ref)
     q_predicted_list.append(q_pred)
     distance = normalize_to_01(abs(tune_unit[index_bool_maxima] - (q_ref + q_pred)/2)) - 1
@@ -181,19 +179,12 @@ for i in range(len(qx_list)):
     confidence = alpha * weight_amplitude + (1 - alpha) * weight_distance
     q_measured_index = np.argmax(confidence)
     q_measured = tune_unit[index_bool_maxima][q_measured_index]
-    q_measured = 0.2*q_measured + 0.4*q_pred + 0.4*q_ref
     q_confidence = max(confidence)
     q_prev_queue.append(q_measured, tune_unit, psd)
     q_measured_list.append(q_measured)
     q_peak_detection = tune_unit[index_bool_maxima][np.argmax(weight_amplitude)]
     peak_detection_list.append(q_peak_detection)
     closest_minima = find_closest_values(index_value_maxima[q_measured_index], index_value_minima)
-    # cf_start = int(max([0, # Should be bigger than 0
-    #                     index_value_maxima[q_measured_index] - np.floor(side_point_num/3), # Expected span
-    #                     closest_minima[0]])) # Stop at the first minima on the left
-    # cf_end = int(min([len(tune_unit) - 1,
-    #                   index_value_maxima[q_measured_index] + np.floor(side_point_num/3),
-    #                   closest_minima[1]]))
     cf_start = int(max(0, index_value_maxima[q_measured_index] - np.floor(side_point_num/3)))
     cf_end = int(min(len(tune_unit) - 1, index_value_maxima[q_measured_index] + np.floor(side_point_num/3)))
     cf_params = gaussian_peak_fit(tune_unit[cf_start:cf_end + 1], psd[cf_start:cf_end + 1])
@@ -204,7 +195,7 @@ for i in range(len(qx_list)):
     # plt.plot(tune_unit, normalize_to_01(q_prev_queue.psd), label="ref")
     # plt.legend()
     # plt.show()
-    print(f"qx:{qx}, q_ref:{q_ref}, q_predicted:{q_pred}, q_measured:{q_measured}, confidence:{q_confidence * 100}%, peak_detection:{q_peak_detection}, curve_fitting:{q_curve_fitting}")
+    print(f"qx:{qx: .4f}, q_ref:{q_ref: .4f}, q_predicted:{q_pred: .4f}, q_measured:{q_measured: .4f}, confidence:{q_confidence * 100: .2f}%, peak_detection:{q_peak_detection: .4f}, curve_fitting:{q_curve_fitting: .4f}")
 
 dic = {'qx': qx_list,
        'q_ref': q_ref_list,

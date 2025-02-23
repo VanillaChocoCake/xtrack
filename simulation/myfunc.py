@@ -591,26 +591,32 @@ class q_queue:
 class AdaptiveKalmanFilter:
     def __init__(self, initial_state=0.5, initial_estimate_error=1, process_noise=0.06, measurement_noise=2.6**2):
         # 初始参数（可随意设置，滤波器会自动调整）
-        self.x = initial_state  # 初始状态
-        self.P = initial_estimate_error  # 初始协方差
-        self.Q = process_noise  # 初始过程噪声
-        self.R = measurement_noise  # 初始测量噪声
+        # 状态量（标量）
+        self.x = initial_state
+
+        # 估计误差协方差（标量）
+        self.P = initial_estimate_error
+
+        # 过程噪声协方差（标量）
+        self.Q = process_noise
+
+        # 测量噪声协方差（标量）
+        self.R = measurement_noise
         self.window = []  # 残差窗口
 
-    def predict(self):
+    def predict_update(self, z, alpha=0.1):
         """ 含参数自适应的预测-更新步骤 """
         # 预测阶段
-        self.P = self.P + self.Q
-        return self.x
+        x_pred = self.x
+        P_pred = self.P + self.Q
 
-    def update(self, z, alpha=0.1):
         # 计算卡尔曼增益
-        K = self.P / (self.P + self.R)
+        K = P_pred / (P_pred + self.R)
 
         # 更新阶段
-        residual = z - self.x
-        self.x = self.x + K * residual
-        self.P = (1 - K) * self.P
+        residual = z - x_pred
+        self.x = x_pred + K * residual
+        self.P = (1 - K) * P_pred
 
         # 记录残差（用于调整参数）
         self.window.append(residual)
@@ -746,130 +752,3 @@ class AdaptiveKalmanFilter2D:
         residual_norm = np.linalg.norm(residual)
         Q_adjustment = np.eye(2) * (self.alpha * residual_norm)
         self.Q = Q_adjustment + (1 - self.alpha) * self.Q
-
-class DualSensorAKF:
-    def __init__(self, state_dim=2, obs_dim=1):
-        """
-        双观测源自适应卡尔曼滤波器
-        :param state_dim: 状态维度（示例：位置和速度）
-        :param obs_dim: 单维观测（两个传感器观测同一状态）
-        """
-        # 系统状态（示例：[位置, 速度]）
-        self.x = np.zeros((state_dim, 1))
-
-        # 状态协方差矩阵
-        self.P = np.eye(state_dim) * 10
-
-        # 过程噪声协方差
-        self.Q = np.eye(state_dim) * 0.01
-
-        # 观测模型（两个传感器观测同一位置）
-        self.H = np.array([[1, 0]], dtype=np.float32)  # 观测位置
-
-        # 传感器参数
-        self.sensors = [
-            {'R': 1 / 0.5, 'weight': 0.5, 'residuals': []},  # 传感器1初始可靠性0.4
-            {'R': 1 / 0.5, 'weight': 0.5, 'residuals': []}  # 传感器2初始可靠性0.6
-        ]
-
-        # 自适应参数
-        self.window_size = 10  # 残差窗口大小
-        self.adapt_rate = 0.15  # 权重调整速率
-        self.min_weight = 0.1  # 最小权重限制
-        self.R_floor = 0.1  # 噪声方差下限
-
-        # 状态转移矩阵（恒定速度模型）
-        self.F = np.array([[1, 1],
-                           [0, 1]], dtype=np.float32)
-
-    def predict(self):
-        """ 预测阶段 """
-        self.x = self.F @ self.x
-        self.P = self.F @ self.P @ self.F.T + self.Q
-        return self.x.copy()
-
-    def update(self, z1, z2):
-        """ 双观测更新阶段 """
-        # 转换观测值为列向量
-        measurements = [np.array([[z1]], dtype=np.float32),
-                        np.array([[z2]], dtype=np.float32)]
-
-        total_gain = np.zeros_like(self.x)
-        total_innovation = 0
-
-        # 对每个传感器进行独立更新
-        for i in range(2):
-            # 计算卡尔曼增益
-            H = self.H
-            R = self.sensors[i]['R']
-            S = H @ self.P @ H.T + R
-            K = self.P @ H.T @ np.linalg.pinv(S)
-
-            # 计算残差
-            residual = measurements[i] - H @ self.x
-            self._update_residual(i, residual)
-
-            # 计算加权增益
-            weighted_K = K * self.sensors[i]['weight']
-
-            # 累积增益和残差
-            total_gain += weighted_K
-            total_innovation += weighted_K @ residual
-
-        # 联合状态更新
-        self.x += total_innovation
-        self.P = (np.eye(2) - total_gain @ self.H) @ self.P
-
-        # 动态调整传感器权重
-        self._adapt_weights()
-        return self.x.copy()
-
-    def _update_residual(self, sensor_idx, residual):
-        """ 更新残差记录 """
-        self.sensors[sensor_idx]['residuals'].append(residual[0, 0])
-        if len(self.sensors[sensor_idx]['residuals']) > self.window_size:
-            self.sensors[sensor_idx]['residuals'].pop(0)
-
-    def _adapt_weights(self):
-        """ 自适应调整传感器权重和噪声参数 """
-        total_weight = 0
-        performance = []
-
-        # 计算各传感器近期表现
-        for i in range(2):
-            res = self.sensors[i]['residuals']
-            if len(res) < 2:
-                perf = 1.0
-            else:
-                # 基于残差标准差评估性能
-                perf = 1 / (np.std(res) + 1e-6)
-
-            # 更新噪声参数
-            if len(res) >= 2:
-                new_R = np.var(res)
-                self.sensors[i]['R'] = max(self.R_floor,
-                                           self.adapt_rate * new_R +
-                                           (1 - self.adapt_rate) * self.sensors[i]['R'])
-
-            performance.append(perf)
-            total_weight += perf
-
-        # 归一化更新权重
-        for i in range(2):
-            new_weight = (performance[i] / total_weight)
-            self.sensors[i]['weight'] = max(self.min_weight,
-                                            self.adapt_rate * new_weight +
-                                            (1 - self.adapt_rate) * self.sensors[i]['weight'])
-
-    def get_sensor_status(self):
-        """ 获取当前传感器状态 """
-        return [
-            {
-                'weight': round(self.sensors[0]['weight'], 4),
-                'R': round(self.sensors[0]['R'], 4)
-            },
-            {
-                'weight': round(self.sensors[1]['weight'], 4),
-                'R': round(self.sensors[1]['R'], 4)
-            }
-        ]
