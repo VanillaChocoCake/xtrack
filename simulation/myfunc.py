@@ -8,12 +8,10 @@ from scipy.ndimage import gaussian_filter1d
 from scipy.optimize import curve_fit
 import bisect
 import pickle
-from scipy.interpolate import interp1d
-from scipy.interpolate import CubicSpline
-from scipy.interpolate import lagrange
+from scipy.interpolate import interp1d, CubicSpline, lagrange, UnivariateSpline
 
 
-def interpolation(data, interpolate_method: str="cubic", interpolate_coef: float=1) -> np.ndarray:
+def interpolation(data: np.ndarray, interpolate_method: str="cubic", interpolate_coef: float=1) -> np.ndarray:
     batch_size = len(data)
     if interpolate_method is not None:
         freq = np.linspace(0, batch_size - 1, num=batch_size)
@@ -24,9 +22,10 @@ def interpolation(data, interpolate_method: str="cubic", interpolate_coef: float
             f = CubicSpline(freq, data)
         elif interpolate_method == "lagrange":
             f = lagrange(freq, data)
+        elif interpolate_method == "univariate":
+            f = UnivariateSpline(freq, data, s=np.mean(data))
         else:
-            print("Interpolate method not recognized, will use cubic interpolation.")
-            f = CubicSpline(freq, data)
+            raise ValueError(f"Unknown interpolation method: {interpolate_method}")
         psd = f(freq_new)
     else:
         psd = data
@@ -38,7 +37,7 @@ def exclude_coherent_spectrum(tune_unit: np.ndarray, spectrum: np.ndarray, qx: f
     coherent_peak = left if np.abs(qx - left) < np.abs(qx - right) else right
     coherent_peak_index = np.where(tune_unit == coherent_peak)[0][0]
     # 计算排除的范围
-    exclude_range = max(1, int(side_point_num/8))
+    exclude_range = max(1, side_point_num//8)
     start = int(max(0, coherent_peak_index - exclude_range))
     stop = int(min(len(spectrum) - 1, coherent_peak_index + exclude_range))  # 修正索引范围
     start_left = int(max(0, coherent_peak_index - side_point_num))
@@ -184,7 +183,7 @@ def generate_q_list(method: str, n_points: int, lower_limit: float, upper_limit:
     elif method == "random":
         from scipy.interpolate import UnivariateSpline
         y = np.random.uniform(lower_limit, upper_limit, n_points)
-        f = UnivariateSpline(x, y, s=2, k=3)
+        f = UnivariateSpline(x, y, s=5*(upper_limit + lower_limit)/2)
         y = f(x)
         y -= min(y)
         y = y/max(y)*(upper_limit - lower_limit) + lower_limit
@@ -277,17 +276,22 @@ def cal_psd(x_data: np.ndarray, noise: np.ndarray,
                 psd_matrix[i] = folded
             elif procedure == 2:
                 # fold -> filter -> sum
-                filtered = gaussian_filter(folded, window_size)
-                # filtered = savgol_filter(psd, window_size, 4)
+                # filtered = gaussian_filter(folded, window_size)
+                filtered = savgol_filter(psd, window_size, 5)
+                filtered = interpolation(filtered, "univariate", 1.0)
                 psd_matrix[i] = filtered
 
     if procedure == 1:
         # fold -> sum -> filter
-        final_psd = psd_matrix[:, freq_mask].sum(axis=0)
+        final_psd = psd_matrix.sum(axis=0)
         final_psd = gaussian_filter(final_psd, window_size)
+        # final_psd = savgol_filter(final_psd, window_size, 5)
+        # final_psd = interpolation(final_psd, "univariate", 1.0)
+        final_psd = final_psd[freq_mask]
     elif procedure == 2:
         # fold -> filter -> sum
         final_psd = psd_matrix[:, freq_mask].sum(axis=0)
+    final_psd /= np.min(final_psd)
     final_psd = interpolation(final_psd, interpolate_method, interpolate_coef)
     final_tune_unit = np.linspace(final_tune_unit[0], final_tune_unit[-1], num=len(final_psd))
 
@@ -584,3 +588,288 @@ class q_queue:
         else:
             return predict_next_point(np.array(self.q_queue))
 
+class AdaptiveKalmanFilter:
+    def __init__(self, initial_state=0.5, initial_estimate_error=1, process_noise=0.06, measurement_noise=2.6**2):
+        # 初始参数（可随意设置，滤波器会自动调整）
+        self.x = initial_state  # 初始状态
+        self.P = initial_estimate_error  # 初始协方差
+        self.Q = process_noise  # 初始过程噪声
+        self.R = measurement_noise  # 初始测量噪声
+        self.window = []  # 残差窗口
+
+    def predict(self):
+        """ 含参数自适应的预测-更新步骤 """
+        # 预测阶段
+        self.P = self.P + self.Q
+        return self.x
+
+    def update(self, z, alpha=0.1):
+        # 计算卡尔曼增益
+        K = self.P / (self.P + self.R)
+
+        # 更新阶段
+        residual = z - self.x
+        self.x = self.x + K * residual
+        self.P = (1 - K) * self.P
+
+        # 记录残差（用于调整参数）
+        self.window.append(residual)
+        if len(self.window) > 10:  # 滑动窗口大小
+            self.window.pop(0)
+
+        # 自适应调整R（基于残差方差）
+        if len(self.window) >= 2:
+            self.R = alpha * np.var(self.window) + (1 - alpha) * self.R
+
+        # 自适应调整Q（基于残差绝对值）
+        self.Q = alpha * abs(residual) + (1 - alpha) * self.Q
+
+        return self.x
+
+    class SimpleKalmanFilter:
+        def __init__(self, initial_state=0.5, initial_estimate_error=1, process_noise=0.06, measurement_noise=2.6**2):
+            """
+            一维卡尔曼滤波器初始化
+            :param initial_state: 初始状态估计值
+            :param initial_estimate_error: 初始估计误差（协方差）
+            :param process_noise: 过程噪声方差（Q）
+            :param measurement_noise: 测量噪声方差（R）
+            """
+            # 状态量（标量）
+            self.x = initial_state
+
+            # 估计误差协方差（标量）
+            self.P = initial_estimate_error
+
+            # 过程噪声协方差（标量）
+            self.Q = process_noise
+
+            # 测量噪声协方差（标量）
+            self.R = measurement_noise
+
+            # 状态转移系数（标量）
+            self.F = 1  # 假设系统为恒定模型
+
+            # 观测系数（标量）
+            self.H = 1  # 直接观测状态量
+
+        def predict(self):
+            """ 预测阶段 """
+            # 状态预测（保持恒定模型）
+            self.x = self.F * self.x
+            # 协方差预测
+            self.P = self.F * self.P * self.F + self.Q
+            return self.x
+
+        def update(self, z):
+            """ 更新阶段 """
+            # 计算卡尔曼增益
+            K = self.P * self.H / (self.H * self.P * self.H + self.R)
+
+            # 状态更新
+            self.x = self.x + K * (z - self.H * self.x)
+
+            # 协方差更新
+            self.P = (1 - K * self.H) * self.P
+            return self.x
+
+
+class AdaptiveKalmanFilter2D:
+    def __init__(self, state_dim=2, measurement_dim=1, alpha=0.2, window_size=10):
+        """
+        二维自适应卡尔曼滤波器
+        :param state_dim: 状态维度（默认为2维，例如位置和速度）
+        :param measurement_dim: 观测维度（默认为1维，单变量观测）
+        """
+        # 状态向量（二维示例：[位置, 速度]）
+        self.x = np.zeros((state_dim, 1))
+
+        # 状态协方差矩阵
+        self.P = np.eye(state_dim)
+
+        # 过程噪声协方差矩阵
+        self.Q = np.eye(state_dim) * 0.1
+
+        # 测量噪声协方差矩阵
+        self.R = np.eye(measurement_dim) * 1
+
+        # 状态转移矩阵（示例：恒定速度模型）
+        self.F = np.array([[1, 1],
+                           [0, 1]], dtype=np.float32)
+
+        # 观测矩阵（假设只能观测位置）
+        self.H = np.array([[1, 0]], dtype=np.float32)
+
+        # 残差历史记录（用于自适应调整）
+        self.residual_window = []
+        self.window_size = window_size
+        self.alpha = alpha
+
+    def predict(self):
+        """ 预测阶段 """
+        self.x = self.F @ self.x
+        self.P = self.F @ self.P @ self.F.T + self.Q
+        return self.x
+
+    def update(self, z):
+        """ 含参数自适应的更新阶段 """
+        # 转换观测值为列向量
+        z = np.array([[z]], dtype=np.float32)
+
+        # 计算卡尔曼增益
+        S = self.H @ self.P @ self.H.T + self.R
+        K = self.P @ self.H.T @ np.linalg.inv(S)
+
+        # 计算残差
+        residual = z - self.H @ self.x
+        self.x = self.x + K @ residual
+        self.P = (np.eye(2) - K @ self.H) @ self.P
+
+        # 记录残差用于参数调整
+        self._adapt_params(residual)
+        return self.x
+
+    def _adapt_params(self, residual):
+        """ 自适应参数调整方法 """
+        # 更新残差窗口
+        self.residual_window.append(residual)
+        if len(self.residual_window) > self.window_size:
+            self.residual_window.pop(0)
+
+        # 调整测量噪声R
+        if len(self.residual_window) >= 2:
+            residuals = np.array(self.residual_window).squeeze()
+            new_R = np.cov(residuals.T) if residuals.ndim > 1 else np.var(residuals)
+            self.R = self.alpha * new_R + (1 - self.alpha) * self.R
+
+        # 调整过程噪声Q（基于残差范数）
+        residual_norm = np.linalg.norm(residual)
+        Q_adjustment = np.eye(2) * (self.alpha * residual_norm)
+        self.Q = Q_adjustment + (1 - self.alpha) * self.Q
+
+class DualSensorAKF:
+    def __init__(self, state_dim=2, obs_dim=1):
+        """
+        双观测源自适应卡尔曼滤波器
+        :param state_dim: 状态维度（示例：位置和速度）
+        :param obs_dim: 单维观测（两个传感器观测同一状态）
+        """
+        # 系统状态（示例：[位置, 速度]）
+        self.x = np.zeros((state_dim, 1))
+
+        # 状态协方差矩阵
+        self.P = np.eye(state_dim) * 10
+
+        # 过程噪声协方差
+        self.Q = np.eye(state_dim) * 0.01
+
+        # 观测模型（两个传感器观测同一位置）
+        self.H = np.array([[1, 0]], dtype=np.float32)  # 观测位置
+
+        # 传感器参数
+        self.sensors = [
+            {'R': 1 / 0.5, 'weight': 0.5, 'residuals': []},  # 传感器1初始可靠性0.4
+            {'R': 1 / 0.5, 'weight': 0.5, 'residuals': []}  # 传感器2初始可靠性0.6
+        ]
+
+        # 自适应参数
+        self.window_size = 10  # 残差窗口大小
+        self.adapt_rate = 0.15  # 权重调整速率
+        self.min_weight = 0.1  # 最小权重限制
+        self.R_floor = 0.1  # 噪声方差下限
+
+        # 状态转移矩阵（恒定速度模型）
+        self.F = np.array([[1, 1],
+                           [0, 1]], dtype=np.float32)
+
+    def predict(self):
+        """ 预测阶段 """
+        self.x = self.F @ self.x
+        self.P = self.F @ self.P @ self.F.T + self.Q
+        return self.x.copy()
+
+    def update(self, z1, z2):
+        """ 双观测更新阶段 """
+        # 转换观测值为列向量
+        measurements = [np.array([[z1]], dtype=np.float32),
+                        np.array([[z2]], dtype=np.float32)]
+
+        total_gain = np.zeros_like(self.x)
+        total_innovation = 0
+
+        # 对每个传感器进行独立更新
+        for i in range(2):
+            # 计算卡尔曼增益
+            H = self.H
+            R = self.sensors[i]['R']
+            S = H @ self.P @ H.T + R
+            K = self.P @ H.T @ np.linalg.pinv(S)
+
+            # 计算残差
+            residual = measurements[i] - H @ self.x
+            self._update_residual(i, residual)
+
+            # 计算加权增益
+            weighted_K = K * self.sensors[i]['weight']
+
+            # 累积增益和残差
+            total_gain += weighted_K
+            total_innovation += weighted_K @ residual
+
+        # 联合状态更新
+        self.x += total_innovation
+        self.P = (np.eye(2) - total_gain @ self.H) @ self.P
+
+        # 动态调整传感器权重
+        self._adapt_weights()
+        return self.x.copy()
+
+    def _update_residual(self, sensor_idx, residual):
+        """ 更新残差记录 """
+        self.sensors[sensor_idx]['residuals'].append(residual[0, 0])
+        if len(self.sensors[sensor_idx]['residuals']) > self.window_size:
+            self.sensors[sensor_idx]['residuals'].pop(0)
+
+    def _adapt_weights(self):
+        """ 自适应调整传感器权重和噪声参数 """
+        total_weight = 0
+        performance = []
+
+        # 计算各传感器近期表现
+        for i in range(2):
+            res = self.sensors[i]['residuals']
+            if len(res) < 2:
+                perf = 1.0
+            else:
+                # 基于残差标准差评估性能
+                perf = 1 / (np.std(res) + 1e-6)
+
+            # 更新噪声参数
+            if len(res) >= 2:
+                new_R = np.var(res)
+                self.sensors[i]['R'] = max(self.R_floor,
+                                           self.adapt_rate * new_R +
+                                           (1 - self.adapt_rate) * self.sensors[i]['R'])
+
+            performance.append(perf)
+            total_weight += perf
+
+        # 归一化更新权重
+        for i in range(2):
+            new_weight = (performance[i] / total_weight)
+            self.sensors[i]['weight'] = max(self.min_weight,
+                                            self.adapt_rate * new_weight +
+                                            (1 - self.adapt_rate) * self.sensors[i]['weight'])
+
+    def get_sensor_status(self):
+        """ 获取当前传感器状态 """
+        return [
+            {
+                'weight': round(self.sensors[0]['weight'], 4),
+                'R': round(self.sensors[0]['R'], 4)
+            },
+            {
+                'weight': round(self.sensors[1]['weight'], 4),
+                'R': round(self.sensors[1]['R'], 4)
+            }
+        ]

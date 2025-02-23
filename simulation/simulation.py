@@ -21,7 +21,7 @@ min_freq_res = 10e3
 simulation_time = 0.001
 max_len = 10
 q_prev_queue = q_queue(max_len=max_len, decay_factor=0.8)
-method = "random"
+method = "sin"
 if config.qx > 0.5:
     qx = 1 - config.qx
 else:
@@ -52,6 +52,8 @@ schottky_harmonic = 2
 batch_size = int(2**np.ceil(np.log2(2*schottky_harmonic*np.max(f_rev_range)/min_freq_res)))
 interpolate_method = "cubic"
 interpolate_coef = 2
+# kf = AdaptiveKalmanFilter(initial_state=qx)
+kf = DualSensorAKF()
 # batch_size = 4096
 # for i in range(len(f_rev_range)):
 for i in range(len(qx_list)):
@@ -59,6 +61,7 @@ for i in range(len(qx_list)):
     qx = qx_list[i]
     qx = float(qx)
     qy = float(qy)
+    q_measured = 0.5
     lmap = xt.LineSegmentMap(length=config.length,
                              qx=qx, qy=qy,
                              betx=config.betx, bety=config.bety,
@@ -77,7 +80,8 @@ for i in range(len(qx_list)):
     freq_res = f_sampling / batch_size
     deltaQ = freq_res / f_rev
     side_point_num = np.ceil(sideband_width / (2 * freq_res))
-    window_size = max(3, 2 * np.floor(side_point_num/6) - 1)
+    window_size = int(max(3, side_point_num//3))
+    # window_size = batch_size // (2*schottky_harmonic*2) // 20
     n_turns = int(np.floor(f_rev * simulation_time / min_track_turns) * min_track_turns)
 
     line = xt.Line(elements=[lmap])
@@ -160,10 +164,16 @@ for i in range(len(qx_list)):
     try:
         q_ref = q_prev_queue.q_ref()
         assert q_ref > 0
-        q_pred = q_prev_queue.q_pred()
+        kf.x[0] = q_ref
+        # q_pred = q_prev_queue.q_pred()
+        # q_pred = kf.predict_update(q_ref)
     except:
         q_ref = np.mean(tune_unit[index_bool_maxima])
-        q_pred = q_ref
+        # q_pred = q_ref
+        # q_pred = kf.predict_update(q_measured)
+    kf.predict()
+    kf.update(q_ref, q_measured)
+    q_pred = kf.x[0, 0]
     q_ref_list.append(q_ref)
     q_predicted_list.append(q_pred)
     distance = normalize_to_01(abs(tune_unit[index_bool_maxima] - (q_ref + q_pred)/2)) - 1
@@ -171,6 +181,7 @@ for i in range(len(qx_list)):
     confidence = alpha * weight_amplitude + (1 - alpha) * weight_distance
     q_measured_index = np.argmax(confidence)
     q_measured = tune_unit[index_bool_maxima][q_measured_index]
+    q_measured = 0.2*q_measured + 0.4*q_pred + 0.4*q_ref
     q_confidence = max(confidence)
     q_prev_queue.append(q_measured, tune_unit, psd)
     q_measured_list.append(q_measured)
@@ -188,11 +199,11 @@ for i in range(len(qx_list)):
     cf_params = gaussian_peak_fit(tune_unit[cf_start:cf_end + 1], psd[cf_start:cf_end + 1])
     q_curve_fitting = cf_params[1]
     cf_list.append(q_curve_fitting)
-    plt.figure()
-    plt.plot(tune_unit, normalize_to_01(psd), label="sum")
-    plt.plot(tune_unit, normalize_to_01(q_prev_queue.psd), label="ref")
-    plt.legend()
-    plt.show()
+    # plt.figure()
+    # plt.plot(tune_unit, normalize_to_01(psd), label="sum")
+    # plt.plot(tune_unit, normalize_to_01(q_prev_queue.psd), label="ref")
+    # plt.legend()
+    # plt.show()
     print(f"qx:{qx}, q_ref:{q_ref}, q_predicted:{q_pred}, q_measured:{q_measured}, confidence:{q_confidence * 100}%, peak_detection:{q_peak_detection}, curve_fitting:{q_curve_fitting}")
 
 dic = {'qx': qx_list,
