@@ -56,12 +56,12 @@ kf = AdaptiveKalmanFilter(initial_state=qx)
 # kf = AdaptiveKalmanFilter2D()
 # batch_size = 4096
 # for i in range(len(f_rev_range)):
+q_measured = 0.3
 for i in range(len(qx_list)):
     qy = qy_list[i]
     qx = qx_list[i]
     qx = float(qx)
     qy = float(qy)
-    q_measured = 0.3
     lmap = xt.LineSegmentMap(length=config.length,
                              qx=qx, qy=qy,
                              betx=config.betx, bety=config.bety,
@@ -98,7 +98,7 @@ for i in range(len(qx_list)):
     gamma = (1 / (1 - beta ** 2)) ** 0.5
     energy0 = gamma * xt.PROTON_MASS_EV
     line.particle_ref = xt.Particles(mass0=xt.PROTON_MASS_EV, q0=1, _context=context, energy0=energy0)
-    bunch = xp.generate_matched_gaussian_bunch(num_particles=int(1e4),
+    bunch = xp.generate_matched_gaussian_bunch(num_particles=int(1e3),
                                                nemitt_x=2 * np.pi * 1e-6, nemitt_y=2 * np.pi * 1e-6,
                                                line=line,
                                                total_intensity_particles=int(1e11),
@@ -165,11 +165,12 @@ for i in range(len(qx_list)):
         q_ref = q_prev_queue.q_ref()
         assert q_ref > 0
         # q_pred = q_prev_queue.q_pred()
-        q_pred = kf.predict_update(q_ref)
+        q_pred = kf.predict_update(q_measured)
     except:
         q_ref = np.mean(tune_unit[index_bool_maxima])
         # q_pred = q_ref
-        q_pred = kf.predict_update(q_measured)
+        q_pred = kf.predict_update(q_ref)
+
     # kf.predict()
     # q_pred = kf.update(0.5*q_measured + 0.5*q_ref)[0][0]
     q_ref_list.append(q_ref)
