@@ -604,7 +604,7 @@ class AdaptiveKalmanFilter:
         self.R = measurement_noise
         self.window = []  # 残差窗口
 
-    def predict_update(self, z, alpha=0.4):
+    def predict_update(self, z, alpha=0.2):
         """ 含参数自适应的预测-更新步骤 """
         # 预测阶段
         x_pred = self.x

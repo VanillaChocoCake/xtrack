@@ -13,15 +13,17 @@ shutup.please()
 context = xo.ContextCpu(omp_num_threads="auto")
 config = SynchrotronConfiguration()
 detector = DetectorConfiguration()
+detector.bandwidth = 10e6
 sideband_width = 500e3
 f_rev_increase_rate = 10e6
 min_track_turns = 10
-snr = -20
+snr = -15
 min_freq_res = 10e3
 simulation_time = 0.001
 max_len = 10
 q_prev_queue = q_queue(max_len=max_len, decay_factor=0.8)
-method = "sin"
+method = "linear"
+f_rev_mode = 7.5e6
 if config.qx > 0.5:
     qx = 1 - config.qx
 else:
@@ -32,11 +34,14 @@ else:
     qy = config.qy
 upper_limit = qx + 0.1
 lower_limit = qx - 0.1
-f_rev_range, covered_frequency_bands \
-    = covered_frequency_bands_minmax(central_frequency=detector.fc, bandwidth=detector.bandwidth,
-                              tune_min=lower_limit, tune_max=upper_limit,
-                              sideband_width=sideband_width,
-                              start_frequency=4e6, end_frequency=7.5e6, step=0.01e6)
+if f_rev_mode == "ramping":
+    f_rev_range, covered_frequency_bands \
+        = covered_frequency_bands_minmax(central_frequency=detector.fc, bandwidth=detector.bandwidth,
+                                         tune_min=lower_limit, tune_max=upper_limit,
+                                         sideband_width=sideband_width,
+                                         start_frequency=4e6, end_frequency=7.5e6, step=0.01e6)
+else:
+    f_rev_range = f_rev_mode*np.ones(351)
 qx_list = generate_q_list(method, len(f_rev_range), qx - 0.09, qx + 0.09)
 qy_list = generate_q_list(method, len(f_rev_range), qy - 0.09, qy + 0.09)
 plot(qx_list)
@@ -165,7 +170,7 @@ for i in range(len(qx_list)):
         q_ref = q_prev_queue.q_ref()
         assert q_ref > 0
         # q_pred = q_prev_queue.q_pred()
-        q_pred = kf.predict_update(q_measured)
+        q_pred = kf.predict_update(0.5*q_measured + 0.5*q_ref)
     except:
         q_ref = np.mean(tune_unit[index_bool_maxima])
         # q_pred = q_ref
@@ -180,6 +185,7 @@ for i in range(len(qx_list)):
     confidence = alpha * weight_amplitude + (1 - alpha) * weight_distance
     q_measured_index = np.argmax(confidence)
     q_measured = tune_unit[index_bool_maxima][q_measured_index]
+    q_measured = q_measured if np.abs(q_measured - q_pred) < 0.1 else q_pred
     q_confidence = max(confidence)
     q_prev_queue.append(q_measured, tune_unit, psd)
     q_measured_list.append(q_measured)
@@ -191,11 +197,11 @@ for i in range(len(qx_list)):
     cf_params = gaussian_peak_fit(tune_unit[cf_start:cf_end + 1], psd[cf_start:cf_end + 1])
     q_curve_fitting = cf_params[1]
     cf_list.append(q_curve_fitting)
-    # plt.figure()
-    # plt.plot(tune_unit, normalize_to_01(psd), label="sum")
-    # plt.plot(tune_unit, normalize_to_01(q_prev_queue.psd), label="ref")
-    # plt.legend()
-    # plt.show()
+    plt.figure()
+    plt.plot(tune_unit, normalize_to_01(psd), label="sum")
+    plt.plot(tune_unit, normalize_to_01(q_prev_queue.psd), label="ref")
+    plt.legend()
+    plt.show()
     print(f"qx:{qx: .4f}, q_ref:{q_ref: .4f}, q_predicted:{q_pred: .4f}, q_measured:{q_measured: .4f}, confidence:{q_confidence * 100: .2f}%, peak_detection:{q_peak_detection: .4f}, curve_fitting:{q_curve_fitting: .4f}")
 
 dic = {'qx': qx_list,
@@ -206,6 +212,6 @@ dic = {'qx': qx_list,
        'curve_fitting': cf_list,
        'failed_to_detect': failed_to_detect}
 plot_measured_results(dic=dic)
-with open(f"{method}_sum.pkl", "wb") as f:
+with open(f"{method}_{snr}_frev_{f_rev_mode}.pkl", "wb") as f:
     pickle.dump(dic, f, protocol=pickle.HIGHEST_PROTOCOL)
 
