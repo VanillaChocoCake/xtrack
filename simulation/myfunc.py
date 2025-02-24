@@ -1,6 +1,5 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from numba.cuda.tests.nocuda.test_nvvm import original
 from scipy.fft import fft, fftshift
 from scipy import signal
 from scipy.signal import savgol_filter, find_peaks
