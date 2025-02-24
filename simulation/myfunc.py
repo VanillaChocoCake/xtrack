@@ -1,5 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
+from numba.cuda.tests.nocuda.test_nvvm import original
 from scipy.fft import fft, fftshift
 from scipy import signal
 from scipy.signal import savgol_filter, find_peaks
@@ -31,22 +32,38 @@ def interpolation(data: np.ndarray, interpolate_method: str="cubic", interpolate
         psd = data
     return psd
 
-def exclude_coherent_spectrum(tune_unit: np.ndarray, spectrum: np.ndarray, qx: float, side_point_num: int) -> np.ndarray:
+def exclude_coherent_spectrum(tune_unit: np.ndarray, spectrum: np.ndarray, side_point_num: int, threshold: float=0.4) -> np.ndarray:
     # 找到与 qx 最接近的两个值
-    left, right = find_closest_values(qx, tune_unit)
-    coherent_peak = left if np.abs(qx - left) < np.abs(qx - right) else right
+    peak_idx = np.argmax(spectrum)
+    peak_tune = tune_unit[peak_idx]
+    left, right = find_closest_values(peak_tune, tune_unit)
+    coherent_peak = left if np.abs(peak_tune - left) < np.abs(peak_tune - right) else right
     coherent_peak_index = np.where(tune_unit == coherent_peak)[0][0]
-    # 计算排除的范围
-    exclude_range = max(1, side_point_num//8)
-    start = int(max(0, coherent_peak_index - exclude_range))
-    stop = int(min(len(spectrum) - 1, coherent_peak_index + exclude_range))  # 修正索引范围
+    # # 计算排除的范围
+    # exclude_range = max(1, side_point_num//8)
+    # start = int(max(0, coherent_peak_index - exclude_range))
+    # stop = int(min(len(spectrum) - 1, coherent_peak_index + exclude_range))  # 修正索引范围
+    coef = 1/np.max(spectrum)
+    spectrum *= coef
     start_left = int(max(0, coherent_peak_index - side_point_num))
     stop_right = int(min(len(spectrum) - 1, coherent_peak_index + side_point_num))
-    fit_mask = ((tune_unit >= tune_unit[start_left]) & (tune_unit <= tune_unit[stop_right])) & ((tune_unit < tune_unit[start]) | (tune_unit > tune_unit[stop]))
+    # fit_mask = ((tune_unit >= tune_unit[start_left]) & (tune_unit <= tune_unit[stop_right])) & ((tune_unit < tune_unit[start]) | (tune_unit > tune_unit[stop]))
+    fit_mask = (spectrum <= threshold) & ((tune_unit >= tune_unit[start_left]) & (tune_unit <= tune_unit[stop_right]))
     fit_tune_unit = tune_unit[fit_mask]
     fit_spectrum = spectrum[fit_mask]
     a, x0, phi = gaussian_peak_fit(fit_tune_unit, fit_spectrum)
-    spectrum[start: stop + 1] = gaussian_function(tune_unit[start:stop + 1], a, x0, phi)
+    scaled_spectrum = spectrum.copy()
+    gaussian_fit = gaussian_function(tune_unit, a, x0, phi)
+    new_mask = (spectrum > threshold) & ((tune_unit >= tune_unit[start_left]) & (tune_unit <= tune_unit[stop_right]))
+    spectrum *= (spectrum <= threshold).astype(np.float64)
+    spectrum += gaussian_fit*new_mask.astype(np.float64)
+    # plt.figure()
+    # plt.plot(tune_unit, scaled_spectrum, label="original")
+    # plt.plot(tune_unit, spectrum, label="replaced")
+    # plt.plot(tune_unit, gaussian_fit, label="fitted")
+    # plt.legend()
+    # plt.show()
+    spectrum /= coef
     return spectrum
 
 def exclude_coherent_signal(t: np.ndarray, y: np.ndarray, frequency: float, exclude_coherent:bool=False) -> np.ndarray:
@@ -200,11 +217,14 @@ def plot(x: np.ndarray, y: np.ndarray=None):
         plt.plot(x, y)
     plt.show()
 
-def cal_psd_normal(data: np.ndarray, f_sampling: float) -> tuple[np.ndarray, np.ndarray]:
+def cal_psd_normal(data: np.ndarray, f_sampling: float) -> tuple:
     full_freqs = fftshift(np.fft.fftfreq(len(data), 1/f_sampling))
     psd = fft(data)
     psd = fftshift(psd)
     psd = np.abs(psd) ** 2 / (len(psd) * f_sampling)
+    noise_floor = np.percentile(psd, 5)  # 使用5%分位数更鲁棒
+    psd -= noise_floor
+    psd = np.clip(psd, 0, None)
     return full_freqs, psd
 
 def cal_psd(x_data: np.ndarray, noise: np.ndarray,
@@ -214,7 +234,7 @@ def cal_psd(x_data: np.ndarray, noise: np.ndarray,
             f_rev: float,
             tune_unit_lower_limit: float, tune_unit_upper_limit: float,
             interpolate_method: str="cubic", interpolate_coef: float=1,
-            tune: float=None, side_point_num: int=None, exclude_coherent:bool=False,
+            side_point_num: int=None, exclude_coherent:bool=False,
             procedure: int=1) -> tuple:
     """
     procedure=1: fold -> sum -> filter
@@ -258,12 +278,11 @@ def cal_psd(x_data: np.ndarray, noise: np.ndarray,
         psd_noise_all = np.abs(spectra_noise_shifted) ** 2 / (batch_size * f_sampling)
         # 批量滤波和折叠 (需保留循环但优化内存访问)
         for i in range(num_batches):
-            raise ValueError("You haven't debugged this part yet!")
+            # raise ValueError("You haven't debugged this part yet!")
             psd = psd_all[i]
             # psd = interpolation(psd, interpolate_method, interpolate_coef)
             _, folded = fold_spectrum(psd, f_rev, f_sampling)
-            folded = folded[freq_mask]
-            folded = exclude_coherent_spectrum(final_tune_unit, folded, tune, side_point_num)
+            folded = exclude_coherent_spectrum(tune_unit, folded, side_point_num)
             psd_noise = psd_noise_all[i, 0: len(folded)]
             psd_matrix[i] = folded + psd_noise
     else:

@@ -52,15 +52,12 @@ peak_detection_list = []
 cf_list = []
 failed_to_detect = np.zeros_like(f_rev_range, dtype=bool)
 alpha = 0.45
-exclude_coherent = False
+exclude_coherent = True
 schottky_harmonic = 2
 batch_size = int(2**np.ceil(np.log2(2*schottky_harmonic*np.max(f_rev_range)/min_freq_res)))
 interpolate_method = "cubic"
 interpolate_coef = 2
 kf = AdaptiveKalmanFilter(initial_state=qx)
-# kf = AdaptiveKalmanFilter2D()
-# batch_size = 4096
-# for i in range(len(f_rev_range)):
 q_measured = 0.3
 for i in range(len(qx_list)):
     qy = qy_list[i]
@@ -114,9 +111,8 @@ for i in range(len(qx_list)):
     # In order to take the fc and bandwidth of the detector into consideration,
     # Qx, Qy and band_width(in revolution frequency unit) need to be adjusted to fit fc
 
-    band_width = 0.2
-    deltaQ = 1e-3
-
+    # band_width = 0.2
+    # deltaQ = 1e-5
     # schottky_monitor.process_spectrum(inst_spectrum_len=int(n_turns / 1), deltaQ=deltaQ,
     #                                   band_width=band_width,
     #                                   Qx=qx, Qy=qy,
@@ -142,7 +138,8 @@ for i in range(len(qx_list)):
     mask_nan = np.isnan(x_data)
     # x_data = BPM.y_mean
     x_data = np.nan_to_num(x_data, nan=0)
-    # x_data_reshaped = generate_noisy_signal(x_data, snr)
+    # freq, clean_spectrum = cal_psd_normal(x_data, f_sampling)
+    # plot(freq, clean_spectrum)
     x_data, noise = generate_noisy_signal(x_data, snr, exclude_coherent=exclude_coherent)
     # x_data_reshaped = windowed_reshape(x_data_reshaped, batch_size)
     x_data_reshaped, batch_size_processed = windowed_reshape(x_data, batch_size)
@@ -161,6 +158,7 @@ for i in range(len(qx_list)):
         tune_unit, psd = cal_psd(x_data=x_data_reshaped, noise=noise_reshaped, batch_size=batch_size_processed,
                                  f_sampling=f_sampling, window_size=window_size, f_rev=f_rev,
                                  tune_unit_lower_limit=lower_limit, tune_unit_upper_limit=upper_limit,
+                                 side_point_num=side_point_num,
                                  interpolate_method=interpolate_method, interpolate_coef=interpolate_coef,
                                  exclude_coherent=exclude_coherent)
     index_bool_maxima, index_value_maxima= find_local_maxima(psd)
