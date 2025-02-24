@@ -94,3 +94,52 @@ class DetectorConfiguration:
         self.fc = fc
         self.fl = self.fc - self.bandwidth / 2
         self.fh = self.fc + self.bandwidth / 2
+
+sideband_width = 500e3
+f_rev_increase_rate = 10e6
+min_track_turns = 10
+snr = -20
+min_freq_res = 10e3
+simulation_time = 0.001
+max_len = 10
+decay_factor = 0.8
+line_shape = "cos"
+f_rev_mode = 7.5e6
+alpha = 0.45
+exclude_coherent = False
+schottky_harmonic = 2
+interpolate_method = "cubic"
+interpolate_coef = 2
+
+class AlgorithmConfiguration:
+    def __init__(self,
+                 sideband_width=sideband_width,
+                 f_rev_increase_rate=f_rev_increase_rate,
+                 min_track_turns=min_track_turns,
+                 snr=snr,
+                 min_freq_res=min_freq_res,
+                 simulation_time=simulation_time,
+                 max_len=max_len,
+                 decay_factor=decay_factor,
+                 line_shape=line_shape,
+                 f_rev_mode=f_rev_mode,
+                 alpha=alpha,
+                 exclude_coherent=exclude_coherent,
+                 schottky_harmonic=schottky_harmonic,
+                 interpolate_method=interpolate_method,
+                 interpolate_coef=interpolate_coef):
+        self.sideband_width = sideband_width
+        self.f_rev_increase_rate = f_rev_increase_rate
+        self.min_track_turns = min_track_turns
+        self.snr = snr
+        self.min_freq_res = min_freq_res
+        self.simulation_time = simulation_time
+        self.max_len = max_len
+        self.decay_factor = decay_factor
+        self.line_shape = line_shape
+        self.f_rev_mode = f_rev_mode
+        self.alpha = alpha
+        self.exclude_coherent = exclude_coherent
+        self.schottky_harmonic = schottky_harmonic
+        self.interpolate_method = interpolate_method
+        self.interpolate_coef = interpolate_coef
