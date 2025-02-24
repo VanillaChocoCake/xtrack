@@ -13,17 +13,25 @@ shutup.please()
 context = xo.ContextCpu(omp_num_threads="auto")
 config = SynchrotronConfiguration()
 detector = DetectorConfiguration()
+
 detector.bandwidth = 10e6
 sideband_width = 500e3
 f_rev_increase_rate = 10e6
 min_track_turns = 10
-snr = -15
+snr = -20
 min_freq_res = 10e3
 simulation_time = 0.001
 max_len = 10
-q_prev_queue = q_queue(max_len=max_len, decay_factor=0.8)
-method = "linear"
+decay_factor = 0.8
+method = "cos"
 f_rev_mode = 7.5e6
+alpha = 0.45
+exclude_coherent = False
+schottky_harmonic = 2
+interpolate_method = "cubic"
+interpolate_coef = 2
+
+q_prev_queue = q_queue(max_len=max_len, decay_factor=0.8)
 if config.qx > 0.5:
     qx = 1 - config.qx
 else:
@@ -50,14 +58,12 @@ q_measured_list = []
 q_predicted_list = []
 peak_detection_list = []
 cf_list = []
+w1_list = []
+w2_list = []
 failed_to_detect = np.zeros_like(f_rev_range, dtype=bool)
-alpha = 0.45
-exclude_coherent = True
-schottky_harmonic = 2
 batch_size = int(2**np.ceil(np.log2(2*schottky_harmonic*np.max(f_rev_range)/min_freq_res)))
-interpolate_method = "cubic"
-interpolate_coef = 2
-kf = AdaptiveKalmanFilter(initial_state=qx)
+# kf = AdaptiveKalmanFilter(initial_state=qx)
+kf = DualDetectorAdaptiveKalmanFilter(initial_state=qx)
 q_measured = 0.3
 for i in range(len(qx_list)):
     qy = qy_list[i]
@@ -81,8 +87,8 @@ for i in range(len(qx_list)):
     band_width = detector.bandwidth / f_rev
     freq_res = f_sampling / batch_size
     deltaQ = freq_res / f_rev
-    side_point_num = np.ceil(sideband_width / (2 * freq_res))
-    window_size = int(max(3, side_point_num//3))
+    side_point_num = sideband_width//(2 * freq_res) + 1
+    window_size = int(max(3, side_point_num//4))
     # window_size = batch_size // (2*schottky_harmonic*2) // 20
     n_turns = int(np.floor(f_rev * simulation_time / min_track_turns) * min_track_turns)
 
@@ -150,15 +156,16 @@ for i in range(len(qx_list)):
         tune_unit, psd = cal_psd(x_data=noise_reshaped, noise=noise_reshaped, batch_size=batch_size_processed,
                                  f_sampling=f_sampling, window_size=window_size, f_rev=f_rev,
                                  tune_unit_lower_limit=lower_limit, tune_unit_upper_limit=upper_limit,
+                                 side_point_num=side_point_num, snr=snr,
                                  interpolate_method=interpolate_method, interpolate_coef=interpolate_coef,
-                                 exclude_coherent=exclude_coherent)
+                                 exclude_coherent=False)
         failed_to_detect[i] = True
         print(f"Betatron tune can not be measured at this frequency.")
     else:
         tune_unit, psd = cal_psd(x_data=x_data_reshaped, noise=noise_reshaped, batch_size=batch_size_processed,
                                  f_sampling=f_sampling, window_size=window_size, f_rev=f_rev,
                                  tune_unit_lower_limit=lower_limit, tune_unit_upper_limit=upper_limit,
-                                 side_point_num=side_point_num,
+                                 side_point_num=side_point_num, snr=snr,
                                  interpolate_method=interpolate_method, interpolate_coef=interpolate_coef,
                                  exclude_coherent=exclude_coherent)
     index_bool_maxima, index_value_maxima= find_local_maxima(psd)
@@ -168,12 +175,15 @@ for i in range(len(qx_list)):
         q_ref = q_prev_queue.q_ref()
         assert q_ref > 0
         # q_pred = q_prev_queue.q_pred()
-        q_pred = kf.predict_update(0.5*q_measured + 0.5*q_ref)
+        # q_pred = kf.predict_update(0.5*q_measured + 0.5*q_ref)
     except:
         q_ref = np.mean(tune_unit[index_bool_maxima])
         # q_pred = q_ref
-        q_pred = kf.predict_update(q_ref)
-
+        # q_pred = kf.predict_update(q_ref)
+    q_pred = kf.predict_update(q_ref, q_measured)
+    w1, w2 = kf.detector_weights()
+    w1_list.append(w1)
+    w2_list.append(w2)
     # kf.predict()
     # q_pred = kf.update(0.5*q_measured + 0.5*q_ref)[0][0]
     q_ref_list.append(q_ref)
@@ -183,15 +193,16 @@ for i in range(len(qx_list)):
     confidence = alpha * weight_amplitude + (1 - alpha) * weight_distance
     q_measured_index = np.argmax(confidence)
     q_measured = tune_unit[index_bool_maxima][q_measured_index]
-    q_measured = q_measured if np.abs(q_measured - q_pred) < 0.1 else q_pred
+    # q_measured = q_measured if np.abs(q_measured - q_pred) < 0.1 else q_pred
+    # q_measured = 0.5*q_measured + 0.5*q_ref
     q_confidence = max(confidence)
     q_prev_queue.append(q_measured, tune_unit, psd)
     q_measured_list.append(q_measured)
     q_peak_detection = tune_unit[index_bool_maxima][np.argmax(weight_amplitude)]
     peak_detection_list.append(q_peak_detection)
     closest_minima = find_closest_values(index_value_maxima[q_measured_index], index_value_minima)
-    cf_start = int(max(0, index_value_maxima[q_measured_index] - np.floor(side_point_num/3)))
-    cf_end = int(min(len(tune_unit) - 1, index_value_maxima[q_measured_index] + np.floor(side_point_num/3)))
+    cf_start = int(max(0, index_value_maxima[q_measured_index] - side_point_num*interpolate_coef//2))
+    cf_end = int(min(len(tune_unit) - 1, index_value_maxima[q_measured_index] + side_point_num*interpolate_coef//2))
     cf_params = gaussian_peak_fit(tune_unit[cf_start:cf_end + 1], psd[cf_start:cf_end + 1])
     q_curve_fitting = cf_params[1]
     cf_list.append(q_curve_fitting)
@@ -208,8 +219,15 @@ dic = {'qx': qx_list,
        'q_measured': q_measured_list,
        'peak_detection': peak_detection_list,
        'curve_fitting': cf_list,
-       'failed_to_detect': failed_to_detect}
+       'failed_to_detect': failed_to_detect,
+       'weight_ref': w1_list,
+       'weight_measured': w2_list}
 plot_measured_results(dic=dic)
 with open(f"{method}_{snr}_frev_{f_rev_mode}_{'without' if exclude_coherent else 'with'}_coherent.pkl", "wb") as f:
     pickle.dump(dic, f, protocol=pickle.HIGHEST_PROTOCOL)
+plt.figure()
+plt.plot(f_rev_range, w1_list, label="w1")
+plt.plot(f_rev_range, w2_list, label="w2")
+plt.legend()
+plt.show()
 

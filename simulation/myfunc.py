@@ -233,7 +233,7 @@ def cal_psd(x_data: np.ndarray, noise: np.ndarray,
             f_rev: float,
             tune_unit_lower_limit: float, tune_unit_upper_limit: float,
             interpolate_method: str="cubic", interpolate_coef: float=1,
-            side_point_num: int=None, exclude_coherent:bool=False,
+            snr: float=-20, side_point_num: int=None, exclude_coherent:bool=False,
             procedure: int=1) -> tuple:
     """
     procedure=1: fold -> sum -> filter
@@ -283,6 +283,10 @@ def cal_psd(x_data: np.ndarray, noise: np.ndarray,
             _, folded = fold_spectrum(psd, f_rev, f_sampling)
             folded = exclude_coherent_spectrum(tune_unit, folded, side_point_num)
             psd_noise = psd_noise_all[i, 0: len(folded)]
+            snr_linear = 10**(snr/10)
+            P_noise_target = np.sum(folded)/snr_linear
+            P_noise = np.sum(psd_noise)
+            psd_noise *= (P_noise_target/P_noise)
             psd_matrix[i] = folded + psd_noise
     else:
         # 批量滤波和折叠 (需保留循环但优化内存访问)
@@ -650,6 +654,86 @@ class AdaptiveKalmanFilter:
 
         return self.x
 
+class DualDetectorAdaptiveKalmanFilter:
+    def __init__(
+            self,
+            initial_state=0.5,
+            initial_estimate_error=1,
+            process_noise=0.06,
+            measurement_noise=2.6 ** 2,  # 初始测量噪声同时赋给两个探测器
+            max_len=8
+    ):
+        # 状态估计初始化
+        self.x = initial_state
+        self.P = initial_estimate_error
+
+        # 过程噪声协方差
+        self.Q = process_noise
+
+        # 两个探测器的测量噪声协方差
+        self.R1 = measurement_noise  # 探测器1的初始噪声
+        self.R2 = measurement_noise  # 探测器2的初始噪声
+
+        self.w1 = 114514
+        self.w2 = 1919810
+
+        # 残差滑动窗口（每个探测器独立）
+        self.window1 = deque(maxlen=max_len)  # 探测器1的残差窗口
+        self.window2 = deque(maxlen=max_len)  # 探测器2的残差窗口
+
+    def predict_update(self, z1, z2, alpha=0.3):
+        """基于双探测器的自适应预测-更新步骤"""
+        # ----------- 预测阶段 -----------
+        x_pred = self.x
+        P_pred = self.P + self.Q  # 预测协方差
+
+        # ----------- 测量融合 -----------
+        # 计算加权综合测量值（噪声小的探测器权重更高）
+        total_precision = 1 / self.R1 + 1 / self.R2
+        self.w1 = (1 / self.R1) / total_precision  # 权重公式1
+        self.w2 = (1 / self.R2) / total_precision  # 权重公式2
+
+        # 加权融合测量值
+        z_fused = self.w1 * z1 + self.w2 * z2
+        R_fused = 1 / total_precision  # 融合后的等效测量噪声
+
+        # ----------- 更新阶段 -----------
+        # 计算卡尔曼增益
+        K = P_pred / (P_pred + R_fused)
+
+        # 更新状态估计
+        residual_fused = z_fused - x_pred
+        self.x = x_pred + K * residual_fused
+        self.P = (1 - K) * P_pred
+
+        # ----------- 参数自适应 -----------
+        # 计算各探测器的残差（基于预测值）
+        residual1 = z1 - x_pred
+        residual2 = z2 - x_pred
+
+        # 更新探测器1的噪声估计
+        self.window1.append(residual1)
+        if len(self.window1) >= 2:
+            var1 = np.var(self.window1)
+            self.R1 = alpha * var1 + (1 - alpha) * self.R1
+
+        # 更新探测器2的噪声估计
+        self.window2.append(residual2)
+        if len(self.window2) >= 2:
+            var2 = np.var(self.window2)
+            self.R2 = alpha * var2 + (1 - alpha) * self.R2
+
+        # 更新过程噪声（基于融合残差）
+        self.Q = alpha * abs(residual_fused) + (1 - alpha) * self.Q
+
+        return self.x
+
+    def detector_weights(self):
+        """获取标准化权重（保证和为1）"""
+        total = self.w1 + self.w2
+        return self.w1 / total, self.w2 / total  # 二次标准化确保精度
+
+
 class SimpleKalmanFilter:
     def __init__(self, initial_state=0.5, initial_estimate_error=1, process_noise=0.06, measurement_noise=2.6 ** 2):
         """
@@ -696,77 +780,3 @@ class SimpleKalmanFilter:
         # 协方差更新
         self.P = (1 - K * self.H) * self.P
         return self.x
-
-
-class AdaptiveKalmanFilter2D:
-    def __init__(self, state_dim=2, measurement_dim=1, alpha=0.2, window_size=10):
-        """
-        二维自适应卡尔曼滤波器
-        :param state_dim: 状态维度（默认为2维，例如位置和速度）
-        :param measurement_dim: 观测维度（默认为1维，单变量观测）
-        """
-        # 状态向量（二维示例：[位置, 速度]）
-        self.x = np.zeros((state_dim, 1))
-
-        # 状态协方差矩阵
-        self.P = np.eye(state_dim)
-
-        # 过程噪声协方差矩阵
-        self.Q = np.eye(state_dim) * 0.1
-
-        # 测量噪声协方差矩阵
-        self.R = np.eye(measurement_dim) * 1
-
-        # 状态转移矩阵（示例：恒定速度模型）
-        self.F = np.array([[1, 1],
-                           [0, 1]], dtype=np.float32)
-
-        # 观测矩阵（假设只能观测位置）
-        self.H = np.array([[1, 0]], dtype=np.float32)
-
-        # 残差历史记录（用于自适应调整）
-        self.residual_window = []
-        self.window_size = window_size
-        self.alpha = alpha
-
-    def predict(self):
-        """ 预测阶段 """
-        self.x = self.F @ self.x
-        self.P = self.F @ self.P @ self.F.T + self.Q
-        return self.x
-
-    def update(self, z):
-        """ 含参数自适应的更新阶段 """
-        # 转换观测值为列向量
-        z = np.array([[z]], dtype=np.float32)
-
-        # 计算卡尔曼增益
-        S = self.H @ self.P @ self.H.T + self.R
-        K = self.P @ self.H.T @ np.linalg.inv(S)
-
-        # 计算残差
-        residual = z - self.H @ self.x
-        self.x = self.x + K @ residual
-        self.P = (np.eye(2) - K @ self.H) @ self.P
-
-        # 记录残差用于参数调整
-        self._adapt_params(residual)
-        return self.x
-
-    def _adapt_params(self, residual):
-        """ 自适应参数调整方法 """
-        # 更新残差窗口
-        self.residual_window.append(residual)
-        if len(self.residual_window) > self.window_size:
-            self.residual_window.pop(0)
-
-        # 调整测量噪声R
-        if len(self.residual_window) >= 2:
-            residuals = np.array(self.residual_window).squeeze()
-            new_R = np.cov(residuals.T) if residuals.ndim > 1 else np.var(residuals)
-            self.R = self.alpha * new_R + (1 - self.alpha) * self.R
-
-        # 调整过程噪声Q（基于残差范数）
-        residual_norm = np.linalg.norm(residual)
-        Q_adjustment = np.eye(2) * (self.alpha * residual_norm)
-        self.Q = Q_adjustment + (1 - self.alpha) * self.Q
