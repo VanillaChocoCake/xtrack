@@ -210,6 +210,6 @@ dic = {'qx': qx_list,
        'curve_fitting': cf_list,
        'failed_to_detect': failed_to_detect}
 plot_measured_results(dic=dic)
-with open(f"{method}_{snr}_frev_{f_rev_mode}.pkl", "wb") as f:
+with open(f"{method}_{snr}_frev_{f_rev_mode}_{'without' if exclude_coherent else 'with'}_coherent.pkl", "wb") as f:
     pickle.dump(dic, f, protocol=pickle.HIGHEST_PROTOCOL)
 
