@@ -10,6 +10,13 @@ import bisect
 import pickle
 from scipy.interpolate import interp1d, CubicSpline, lagrange, UnivariateSpline
 
+def fix_anomaly(data: list, value: float, max_len: int, outliers_threshold_coef) -> float:
+    if len(data) >= max_len:
+        diffs = np.diff(data)
+        avg_diff = np.mean(np.abs(diffs))
+        if np.abs(value - data[-1]) >= outliers_threshold_coef * avg_diff:
+            value = data[-1] + np.sign(diffs[-1]) * avg_diff
+    return value
 
 def interpolation(data: np.ndarray, interpolate_method: str="cubic", interpolate_coef: float=1) -> np.ndarray:
     batch_size = len(data)
@@ -118,16 +125,28 @@ def plot_measured_results(dic: dict=None, filename: str=None):
     if dic is None:
         with open(filename, "rb") as f:
             dic = pickle.load(f)
+    qx = np.array(dic['qx'])
+    failed_to_detect = np.array(dic['failed_to_detect'])
+    q_ref = np.array(dic['q_ref'])
+    q_predicted = np.array(dic['q_predicted'])
+    q_measured = np.array(dic['q_measured'])
+    peak_detection = np.array(dic['peak_detection'])
+    cf = np.array(dic['curve_fitting'])
+    weight_ref = np.array(dic['weight_ref'])
+    weight_measured = np.array(dic['weight_measured'])
     plt.figure()
-    plt.plot(dic['qx'], label='nominal')
-    plt.plot(dic['qx'] + 0.01, label='nominal + 0.01')
-    plt.plot(dic['qx'] - 0.01, label='nominal - 0.01')
-    plt.plot(dic['failed_to_detect'], label='not covered area')
-    plt.plot(dic['q_ref'], 'o', label='reference', markersize=1)
-    plt.plot(dic['q_predicted'], 'v', label='predicted', markersize=1)
-    plt.plot(dic['q_measured'], 's', label='measured', markersize=1)
-    # plt.plot(dic['peak_detection'], '*', label='peak detection', markersize=1)
-    plt.plot(dic['curve_fitting'], 'p', label='curve fitting', markersize=1)
+    plt.plot(qx, label='nominal')
+    plt.plot(qx + 0.01, label='nominal + 0.01')
+    plt.plot(qx - 0.01, label='nominal - 0.01')
+    plt.plot(failed_to_detect, label='not covered area')
+    plt.plot(q_ref, 'o', label='reference', markersize=1)
+    plt.plot(q_predicted, 'v', label='predicted', markersize=1)
+    plt.plot(q_measured, 's', label='measured', markersize=1)
+    # plt.plot(peak_detection, '*', label='peak detection', markersize=1)
+    plt.plot(cf, 'p', label='curve fitting', markersize=1)
+    # plt.plot(weight_ref, label='weight_ref')
+    # plt.plot(weight_measured, label='weight_measured')
+    plt.title("Comparison")
     plt.legend()
     plt.show()
 
@@ -661,7 +680,8 @@ class DualDetectorAdaptiveKalmanFilter:
             initial_estimate_error=1,
             process_noise=0.06,
             measurement_noise=2.6 ** 2,  # 初始测量噪声同时赋给两个探测器
-            max_len=8
+            max_len=8,
+            alpha=0.3, alpha_range=(0.1, 0.5)
     ):
         # 状态估计初始化
         self.x = initial_state
@@ -680,8 +700,12 @@ class DualDetectorAdaptiveKalmanFilter:
         # 残差滑动窗口（每个探测器独立）
         self.window1 = deque(maxlen=max_len)  # 探测器1的残差窗口
         self.window2 = deque(maxlen=max_len)  # 探测器2的残差窗口
+        self.residual_history = deque(maxlen=5)
 
-    def predict_update(self, z1, z2, alpha=0.3):
+        self.alpha = alpha
+        self.alpha_min, self.alpha_max = alpha_range
+
+    def predict_update(self, z1, z2):
         """基于双探测器的自适应预测-更新步骤"""
         # ----------- 预测阶段 -----------
         x_pred = self.x
@@ -708,6 +732,15 @@ class DualDetectorAdaptiveKalmanFilter:
 
         # ----------- 参数自适应 -----------
         # 计算各探测器的残差（基于预测值）
+        # 记录残差历史（用于alpha调整）
+        self.residual_history.append(abs(residual_fused))
+
+        # 动态调整alpha（基于最近残差均值）
+        if len(self.residual_history) >= 3:
+            avg_residual = np.mean(self.residual_history)
+            # alpha与残差大小正相关（S型曲线调整）
+            self.alpha = self.alpha_min + (self.alpha_max - self.alpha_min) * \
+                         (avg_residual / (avg_residual + 0.5))  # 0.5为平滑系数
         residual1 = z1 - x_pred
         residual2 = z2 - x_pred
 
@@ -715,16 +748,16 @@ class DualDetectorAdaptiveKalmanFilter:
         self.window1.append(residual1)
         if len(self.window1) >= 2:
             var1 = np.var(self.window1)
-            self.R1 = alpha * var1 + (1 - alpha) * self.R1
+            self.R1 = self.alpha * var1 + (1 - self.alpha) * self.R1
 
         # 更新探测器2的噪声估计
         self.window2.append(residual2)
         if len(self.window2) >= 2:
             var2 = np.var(self.window2)
-            self.R2 = alpha * var2 + (1 - alpha) * self.R2
+            self.R2 = self.alpha * var2 + (1 - self.alpha) * self.R2
 
         # 更新过程噪声（基于融合残差）
-        self.Q = alpha * abs(residual_fused) + (1 - alpha) * self.Q
+        self.Q = self.alpha * abs(residual_fused) + (1 - self.alpha) * self.Q
 
         return self.x
 

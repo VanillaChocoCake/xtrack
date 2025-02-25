@@ -1,5 +1,6 @@
 import matplotlib.pyplot as plt
 import numpy as np
+
 import xtrack as xt
 import xpart as xp
 import xobjects as xo
@@ -29,6 +30,7 @@ def tune_measurement_algorithm(synchrotron_parameters: SynchrotronConfiguration,
     schottky_harmonic = algorithm_parameters.schottky_harmonic
     interpolate_method = algorithm_parameters.interpolate_method
     interpolate_coef = algorithm_parameters.interpolate_coef
+    outliers_threshold_coef = algorithm_parameters.outliers_threshold_coef
 
     q_prev_queue = q_queue(max_len=max_len, decay_factor=decay_factor)
     if synchrotron_parameters.qx > 0.5:
@@ -173,13 +175,11 @@ def tune_measurement_algorithm(synchrotron_parameters: SynchrotronConfiguration,
         try:
             q_ref = q_prev_queue.q_ref()
             assert q_ref > 0
-            # q_pred = q_prev_queue.q_pred()
-            # q_pred = kf.predict_update(0.5*q_measured + 0.5*q_ref)
+            q_ref = fix_anomaly(q_ref_list, q_ref, max_len, outliers_threshold_coef)
         except:
             q_ref = np.mean(tune_unit[index_bool_maxima])
-            # q_pred = q_ref
-            # q_pred = kf.predict_update(q_ref)
         q_pred = kf.predict_update(q_ref, q_measured)
+        q_pred = fix_anomaly(q_predicted_list, q_pred, max_len, outliers_threshold_coef)
         w1, w2 = kf.detector_weights()
         w1_list.append(w1)
         w2_list.append(w2)
@@ -192,8 +192,7 @@ def tune_measurement_algorithm(synchrotron_parameters: SynchrotronConfiguration,
         confidence = alpha * weight_amplitude + (1 - alpha) * weight_distance
         q_measured_index = np.argmax(confidence)
         q_measured = tune_unit[index_bool_maxima][q_measured_index]
-        # q_measured = q_measured if np.abs(q_measured - q_pred) < 0.1 else q_pred
-        # q_measured = 0.5*q_measured + 0.5*q_ref
+        q_measured = fix_anomaly(q_measured_list, q_measured, max_len, outliers_threshold_coef)
         q_confidence = max(confidence)
         q_prev_queue.append(q_measured, tune_unit, psd)
         q_measured_list.append(q_measured)
@@ -227,17 +226,17 @@ def tune_measurement_algorithm(synchrotron_parameters: SynchrotronConfiguration,
     with open(f"{line_shape}_{snr}_frev_{f_rev_mode}_{'without' if exclude_coherent else 'with'}_coherent.pkl", "wb") as f:
         pickle.dump(dic, f, protocol=pickle.HIGHEST_PROTOCOL)
     plt.figure()
-    plt.plot(f_rev_range, w1_list, label="w1")
-    plt.plot(f_rev_range, w2_list, label="w2")
+    plt.plot(w1_list, label="w1")
+    plt.plot(w2_list, label="w2")
     plt.legend()
     plt.show()
 
 if __name__ == "__main__":
     synchrotron_parameters = SynchrotronConfiguration()
     detector_parameters = DetectorConfiguration(bandwidth=10e6)
-    snr_list = [-20, -15, -10]
+    snr_list = [-20]
     line_shape_list = ["linear", "cos", "sin", "random", "constant"]
-    exclude_coherent_list = [True, False]
+    exclude_coherent_list = [False]
     shutup.please()
     for snr in snr_list:
         for line_shape in line_shape_list:

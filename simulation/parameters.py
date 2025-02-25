@@ -110,6 +110,7 @@ exclude_coherent = False
 schottky_harmonic = 2
 interpolate_method = "cubic"
 interpolate_coef = 2
+outliers_threshold_coef = 10
 
 class AlgorithmConfiguration:
     def __init__(self,
@@ -127,7 +128,8 @@ class AlgorithmConfiguration:
                  exclude_coherent=exclude_coherent,
                  schottky_harmonic=schottky_harmonic,
                  interpolate_method=interpolate_method,
-                 interpolate_coef=interpolate_coef):
+                 interpolate_coef=interpolate_coef,
+                 outliers_threshold_coef=outliers_threshold_coef,):
         self.sideband_width = sideband_width
         self.f_rev_increase_rate = f_rev_increase_rate
         self.min_track_turns = min_track_turns
@@ -143,3 +145,4 @@ class AlgorithmConfiguration:
         self.schottky_harmonic = schottky_harmonic
         self.interpolate_method = interpolate_method
         self.interpolate_coef = interpolate_coef
+        self.outliers_threshold_coef = outliers_threshold_coef
