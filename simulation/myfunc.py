@@ -10,12 +10,51 @@ import bisect
 import pickle
 from scipy.interpolate import interp1d, CubicSpline, lagrange, UnivariateSpline
 
-def fix_anomaly(data: list, value: float, max_len: int, outliers_threshold_coef) -> float:
-    if len(data) >= max_len:
+
+def fix_anomaly(data: list, value: float, max_len: int, outliers_threshold_coef: float) -> float:
+    if len(data) >= max_len // 2:  # 降低有效数据阈值
+        # ===== 改进1：使用鲁棒的统计量 =====
         diffs = np.diff(data)
-        avg_diff = np.mean(np.abs(diffs))
-        if np.abs(value - data[-1]) >= outliers_threshold_coef * avg_diff:
-            value = data[-1] + np.sign(diffs[-1]) * avg_diff
+
+        # 使用绝对中位差替代标准差
+        mad = np.median(np.abs(diffs - np.median(diffs)))
+        threshold = outliers_threshold_coef * (1.4826 * mad)  # MAD到标准差的换算系数
+
+        # ===== 改进2：趋势估计优化 =====
+        # 使用中位数差分作为趋势基准
+        median_diff = np.median(diffs)
+
+        # 排除最近3个点的局部波动（防止异常点污染趋势）
+        if len(diffs) > 3:
+            stable_diff = np.median(diffs[-3:])
+        else:
+            stable_diff = median_diff
+
+        # ===== 改进3：动态阈值调整 =====
+        current_diff = value - data[-1]
+        deviation_ratio = np.abs(current_diff) / (threshold + 1e-6)  # 防止除零
+
+        # ===== 改进4：分级异常处理 =====
+        if deviation_ratio > 2.0:  # 严重异常
+            corrected = data[-1] + stable_diff
+        elif deviation_ratio > 1.0:  # 一般异常
+            # 混合全局趋势和局部趋势
+            corrected = data[-1] + 0.7 * stable_diff + 0.3 * median_diff
+        else:  # 正常数据
+            return value
+
+        # ===== 改进5：防止连续修正累积误差 =====
+        if len(data) >= max_len:
+            # 对比修正值与历史趋势的匹配度
+            history_trend = np.polyfit(range(len(data)), data, 1)[0]
+            trend_diff = np.abs(corrected - data[-1] - history_trend)
+
+            # 趋势偏离过大时回归历史趋势
+            if trend_diff > 2 * threshold:
+                corrected = data[-1] + history_trend
+
+        # ===== 平滑过渡 =====
+        return 0.3 * corrected + 0.7 * value  # 混合原始值和修正值
     return value
 
 def interpolation(data: np.ndarray, interpolate_method: str="cubic", interpolate_coef: float=1) -> np.ndarray:
@@ -143,7 +182,7 @@ def plot_measured_results(dic: dict=None, filename: str=None):
     plt.plot(q_predicted, 'v', label='predicted', markersize=1)
     plt.plot(q_measured, 's', label='measured', markersize=1)
     # plt.plot(peak_detection, '*', label='peak detection', markersize=1)
-    plt.plot(cf, 'p', label='curve fitting', markersize=1)
+    # plt.plot(cf, 'p', label='curve fitting', markersize=1)
     # plt.plot(weight_ref, label='weight_ref')
     # plt.plot(weight_measured, label='weight_measured')
     plt.title("Comparison")
@@ -216,13 +255,18 @@ def generate_q_list(method: str, n_points: int, lower_limit: float, upper_limit:
     elif method == "linear":
         q_list = np.linspace(lower_limit, upper_limit, num=n_points)
     elif method == "random":
-        from scipy.interpolate import UnivariateSpline
-        y = np.random.uniform(lower_limit, upper_limit, n_points)
-        f = UnivariateSpline(x, y, s=5*(upper_limit + lower_limit)/2)
-        y = f(x)
-        y -= min(y)
-        y = y/max(y)*(upper_limit - lower_limit) + lower_limit
+        # y = np.random.uniform(lower_limit, upper_limit, n_points)
+        # f = UnivariateSpline(x, y, s=5*(upper_limit + lower_limit)/2)
+        # y = f(x)
+        # y -= min(y)
+        # y = y/max(y)*(upper_limit - lower_limit) + lower_limit
+        # q_list = y
+        y = np.sinc(6*x)
+        y -= np.min(y)
+        y *= (upper_limit - lower_limit)/np.max(y)
+        y += lower_limit
         q_list = y
+
     else:
         q_list = (upper_limit + lower_limit)*0.5*np.ones_like(x)
     return q_list
@@ -302,10 +346,10 @@ def cal_psd(x_data: np.ndarray, noise: np.ndarray,
             _, folded = fold_spectrum(psd, f_rev, f_sampling)
             folded = exclude_coherent_spectrum(tune_unit, folded, side_point_num)
             psd_noise = psd_noise_all[i, 0: len(folded)]
-            snr_linear = 10**(snr/10)
-            P_noise_target = np.sum(folded)/snr_linear
-            P_noise = np.sum(psd_noise)
-            psd_noise *= (P_noise_target/P_noise)
+            # snr_linear = 10**(snr/10)
+            # P_noise_target = np.sum(folded)/snr_linear
+            # P_noise = np.sum(psd_noise)
+            # psd_noise *= (P_noise_target/P_noise)
             psd_matrix[i] = folded + psd_noise
     else:
         # 批量滤波和折叠 (需保留循环但优化内存访问)
