@@ -32,6 +32,7 @@ def tune_measurement_algorithm(synchrotron_parameters: SynchrotronConfiguration,
     interpolate_coef = algorithm_parameters.interpolate_coef
     outliers_len = algorithm_parameters.outliers_len
     outliers_threshold_coef = algorithm_parameters.outliers_threshold_coef
+    filter = algorithm_parameters.filter
 
     q_prev_queue = q_queue(max_len=max_len, decay_factor=decay_factor)
     if synchrotron_parameters.qx > 0.5:
@@ -159,6 +160,7 @@ def tune_measurement_algorithm(synchrotron_parameters: SynchrotronConfiguration,
                                      f_sampling=f_sampling, window_size=window_size, f_rev=f_rev,
                                      tune_unit_lower_limit=lower_limit, tune_unit_upper_limit=upper_limit,
                                      side_point_num=side_point_num, snr=snr,
+                                     filter=filter,
                                      interpolate_method=interpolate_method, interpolate_coef=interpolate_coef,
                                      exclude_coherent=False)
             failed_to_detect[i] = True
@@ -168,6 +170,7 @@ def tune_measurement_algorithm(synchrotron_parameters: SynchrotronConfiguration,
                                      f_sampling=f_sampling, window_size=window_size, f_rev=f_rev,
                                      tune_unit_lower_limit=lower_limit, tune_unit_upper_limit=upper_limit,
                                      side_point_num=side_point_num, snr=snr,
+                                     filter=filter,
                                      interpolate_method=interpolate_method, interpolate_coef=interpolate_coef,
                                      exclude_coherent=exclude_coherent)
         index_bool_maxima, index_value_maxima = find_local_maxima(psd)
@@ -235,6 +238,7 @@ def tune_measurement_algorithm(synchrotron_parameters: SynchrotronConfiguration,
 if __name__ == "__main__":
     synchrotron_parameters = SynchrotronConfiguration()
     detector_parameters = DetectorConfiguration(bandwidth=10e6)
+    filter = "gaussian"
     snr_list = [-20]
     line_shape_list = ["sin", "random", "constant", "linear", "cos"]
     exclude_coherent_list = [False]
@@ -242,6 +246,9 @@ if __name__ == "__main__":
     for snr in snr_list:
         for line_shape in line_shape_list:
             for exclude_coherent in exclude_coherent_list:
-                algorithm_parameters = AlgorithmConfiguration(snr=snr, line_shape=line_shape, exclude_coherent=exclude_coherent)
+                algorithm_parameters = AlgorithmConfiguration(snr=snr,
+                                                              line_shape=line_shape,
+                                                              exclude_coherent=exclude_coherent,
+                                                              filter=filter)
                 tune_measurement_algorithm(synchrotron_parameters, detector_parameters, algorithm_parameters)
                 

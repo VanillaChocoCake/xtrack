@@ -295,6 +295,7 @@ def cal_psd(x_data: np.ndarray, noise: np.ndarray,
             window_size: int,
             f_rev: float,
             tune_unit_lower_limit: float, tune_unit_upper_limit: float,
+            filter: str="gaussian",
             interpolate_method: str="cubic", interpolate_coef: float=1,
             snr: float=-20, side_point_num: int=None, exclude_coherent:bool=False,
             procedure: int=1) -> tuple:
@@ -361,16 +362,20 @@ def cal_psd(x_data: np.ndarray, noise: np.ndarray,
                 psd_matrix[i] = folded
             elif procedure == 2:
                 # fold -> filter -> sum
-                # filtered = gaussian_filter(folded, window_size)
-                filtered = savgol_filter(psd, window_size, 5)
+                if filter == "gaussian":
+                    filtered = gaussian_filter(folded, window_size)
+                else:
+                    filtered = savgol_filter(psd, window_size, 5)
                 filtered = interpolation(filtered, "univariate", 1.0)
                 psd_matrix[i] = filtered
 
     if procedure == 1:
         # fold -> sum -> filter
         final_psd = psd_matrix.sum(axis=0)
-        final_psd = gaussian_filter(final_psd, window_size)
-        # final_psd = savgol_filter(final_psd, window_size, 5)
+        if filter == "gaussian":
+            final_psd = gaussian_filter(final_psd, window_size)
+        else:
+            final_psd = savgol_filter(final_psd, window_size, 5)
         # final_psd = interpolation(final_psd, "univariate", 1.0)
         final_psd = final_psd[freq_mask]
     elif procedure == 2:

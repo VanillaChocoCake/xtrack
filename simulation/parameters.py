@@ -112,6 +112,7 @@ interpolate_method = "cubic"
 interpolate_coef = 2
 outliers_len = 20
 outliers_threshold_coef = 2
+filter = "gaussian"
 
 class AlgorithmConfiguration:
     def __init__(self,
@@ -130,7 +131,8 @@ class AlgorithmConfiguration:
                  schottky_harmonic=schottky_harmonic,
                  interpolate_method=interpolate_method,
                  interpolate_coef=interpolate_coef,
-                 outliers_threshold_coef=outliers_threshold_coef,):
+                 outliers_threshold_coef=outliers_threshold_coef,
+                 filter=filter):
         self.sideband_width = sideband_width
         self.f_rev_increase_rate = f_rev_increase_rate
         self.min_track_turns = min_track_turns
@@ -148,3 +150,4 @@ class AlgorithmConfiguration:
         self.interpolate_coef = interpolate_coef
         self.outliers_len = outliers_len
         self.outliers_threshold_coef = outliers_threshold_coef
+        self.filter = filter
