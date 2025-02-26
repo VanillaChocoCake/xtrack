@@ -98,14 +98,14 @@ def tune_measurement_algorithm(synchrotron_parameters: SynchrotronConfiguration,
 
         line = xt.Line(elements=[lmap])
         line.discard_tracker()
-        monitor = xt.ParticlesMonitor(_context=context, start_at_turn=1, stop_at_turn=n_turns, num_particles=int(1e3))
-        schottky_monitor = xt.SchottkyMonitor(f_rev=f_rev, schottky_harmonic=5, n_taylor=32)
+        # monitor = xt.ParticlesMonitor(_context=context, start_at_turn=1, stop_at_turn=n_turns, num_particles=int(1e3))
+        # schottky_monitor = xt.SchottkyMonitor(f_rev=f_rev, schottky_harmonic=5, n_taylor=32)
         BPM = xt.BeamPositionMonitor(frev=f_rev,
                                      start_at_turn=0, stop_at_turn=n_turns,
                                      sampling_frequency=f_sampling)
-        line.append_element(element=schottky_monitor, name="SchottkyMonitor")
+        # line.append_element(element=schottky_monitor, name="SchottkyMonitor")
         line.append_element(element=BPM, name="BPM")
-        line.append_element(element=monitor, name="normal_monitor")
+        # line.append_element(element=monitor, name="normal_monitor")
         line.build_tracker()
 
         beta = synchrotron_parameters.length * f_rev / sc.c
