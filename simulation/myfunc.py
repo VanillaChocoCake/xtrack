@@ -10,7 +10,22 @@ import bisect
 import pickle
 from scipy.interpolate import interp1d, CubicSpline, lagrange, UnivariateSpline
 from collections import deque
+import h5py
 
+def load_matlab_v73(filename: str, variable_name: str):
+    # 使用 h5py 打开 hdf5 文件
+    with h5py.File(filename, 'r') as f:
+        # 查看所有的顶层数据集名称
+        keys = list(f.keys())
+        print("文件中的数据集:", keys)
+
+        # 假设你知道需要的变量名称，譬如 'variable_name'
+        if variable_name in f:
+            # 将指定变量转换成 NumPy 数组
+            data = np.array(f[variable_name])
+            return data
+        else:
+            raise KeyError(f"变量 {variable_name} 不存在于文件中")
 
 def fix_anomaly(data: list, value: float, max_len: int, outliers_threshold_coef: float) -> float:
     data = np.asarray(data)
@@ -91,14 +106,10 @@ def exclude_coherent_spectrum(tune_unit: np.ndarray, spectrum: np.ndarray, side_
     coherent_peak = left if np.abs(peak_tune - left) < np.abs(peak_tune - right) else right
     coherent_peak_index = np.where(tune_unit == coherent_peak)[0][0]
     # # 计算排除的范围
-    # exclude_range = max(1, side_point_num//8)
-    # start = int(max(0, coherent_peak_index - exclude_range))
-    # stop = int(min(len(spectrum) - 1, coherent_peak_index + exclude_range))  # 修正索引范围
     coef = 1/np.max(spectrum)
     spectrum *= coef
     start_left = int(max(0, coherent_peak_index - side_point_num))
     stop_right = int(min(len(spectrum) - 1, coherent_peak_index + side_point_num))
-    # fit_mask = ((tune_unit >= tune_unit[start_left]) & (tune_unit <= tune_unit[stop_right])) & ((tune_unit < tune_unit[start]) | (tune_unit > tune_unit[stop]))
     fit_mask = (spectrum <= threshold) & ((tune_unit >= tune_unit[start_left]) & (tune_unit <= tune_unit[stop_right]))
     fit_tune_unit = tune_unit[fit_mask]
     fit_spectrum = spectrum[fit_mask]
@@ -117,16 +128,32 @@ def exclude_coherent_spectrum(tune_unit: np.ndarray, spectrum: np.ndarray, side_
     spectrum /= coef
     return spectrum
 
-def exclude_coherent_signal(t: np.ndarray, y: np.ndarray, frequency: float, exclude_coherent:bool=False) -> np.ndarray:
+# def exclude_coherent_signal(t: np.ndarray, y: np.ndarray, frequency: float, exclude_coherent:bool=False) -> np.ndarray:
+#     def harmonic_model(t, A, f, phi):
+#         return A * np.sin(2 * np.pi * f * t + phi)
+#     if exclude_coherent:
+#         p0 = [max(y), frequency, 0]
+#         params, _ = curve_fit(harmonic_model, xdata=t, ydata=y, p0=p0)
+#         A_fit, f_fit, phi_fit = params
+#         fitted_harmonic = harmonic_model(t, A_fit, f_fit, phi_fit)
+#         residual_signal = y - fitted_harmonic
+#         return residual_signal
+#     else:
+#         return y
+
+def exclude_coherent_signal(t: np.ndarray, y: np.ndarray, f_sampling: float, frequency: float, exclude_coherent:bool=False) -> np.ndarray:
     def harmonic_model(t, A, f, phi):
         return A * np.sin(2 * np.pi * f * t + phi)
     if exclude_coherent:
-        p0 = [max(y), frequency, 0]
-        params, _ = curve_fit(harmonic_model, xdata=t, ydata=y, p0=p0)
-        A_fit, f_fit, phi_fit = params
-        fitted_harmonic = harmonic_model(t, A_fit, f_fit, phi_fit)
-        residual_signal = y - fitted_harmonic
-        return residual_signal
+        freqs, psd = cal_psd_normal(y, f_sampling)
+        mask = freqs > 0
+        freqs = freqs[mask]
+        psd = psd[mask]
+        psd -= np.min(psd)
+        psd /= np.max(psd)
+
+
+
     else:
         return y
 
@@ -285,11 +312,18 @@ def plot(x: np.ndarray, y: np.ndarray=None):
         plt.plot(x, y)
     plt.show()
 
-def cal_psd_normal(data: np.ndarray, f_sampling: float) -> tuple:
-    full_freqs = fftshift(np.fft.fftfreq(len(data), 1/f_sampling))
-    psd = fft(data)
-    psd = fftshift(psd)
-    psd = np.abs(psd) ** 2 / (len(psd) * f_sampling)
+
+def cal_psd_normal(data: np.ndarray, f_sampling: float = None) -> tuple:
+    psd = fft(data, axis=-1)
+    psd = fftshift(psd, axes=-1)
+    if f_sampling:
+        full_freqs = fftshift(np.fft.fftfreq(data.shape[-1], 1 / f_sampling))
+        psd = np.abs(psd) ** 2 / (data.shape[-1] * f_sampling)
+    else:
+        psd = np.abs(psd) ** 2 / data.shape[-1]
+        full_freqs = None
+    if data.ndim > 1:
+        psd = np.sum(psd, axis=0)
     noise_floor = np.percentile(psd, 5)  # 使用5%分位数更鲁棒
     psd -= noise_floor
     psd = np.clip(psd, 0, None)

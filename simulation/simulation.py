@@ -13,7 +13,7 @@ import scipy.constants as sc
 
 def tune_measurement_algorithm(synchrotron_parameters: SynchrotronConfiguration,
                                detector_parameters: DetectorConfiguration,
-                               algorithm_parameters: AlgorithmConfiguration):
+                               algorithm_parameters: AlgorithmConfiguration) -> None:
     context = xo.ContextCpu(omp_num_threads="auto")
     sideband_width = algorithm_parameters.sideband_width
     f_rev_increase_rate = algorithm_parameters.f_rev_increase_rate
@@ -71,6 +71,7 @@ def tune_measurement_algorithm(synchrotron_parameters: SynchrotronConfiguration,
     for i in range(len(qx_list)):
         qy = qy_list[i]
         qx = qx_list[i]
+        qx = 0.68
         qx = float(qx)
         qy = float(qy)
         lmap = xt.LineSegmentMap(length=synchrotron_parameters.length,
@@ -97,12 +98,14 @@ def tune_measurement_algorithm(synchrotron_parameters: SynchrotronConfiguration,
 
         line = xt.Line(elements=[lmap])
         line.discard_tracker()
-        schottky_monitor = xt.SchottkyMonitor(f_rev=f_rev, schottky_harmonic=schottky_harmonic, n_taylor=32)
+        monitor = xt.ParticlesMonitor(_context=context, start_at_turn=1, stop_at_turn=n_turns, num_particles=int(1e3))
+        schottky_monitor = xt.SchottkyMonitor(f_rev=f_rev, schottky_harmonic=5, n_taylor=32)
         BPM = xt.BeamPositionMonitor(frev=f_rev,
                                      start_at_turn=0, stop_at_turn=n_turns,
                                      sampling_frequency=f_sampling)
         line.append_element(element=schottky_monitor, name="SchottkyMonitor")
-        line.append_element(element=BPM, name=f"bpm")
+        line.append_element(element=BPM, name="BPM")
+        line.append_element(element=monitor, name="normal_monitor")
         line.build_tracker()
 
         beta = synchrotron_parameters.length * f_rev / sc.c
@@ -117,40 +120,66 @@ def tune_measurement_algorithm(synchrotron_parameters: SynchrotronConfiguration,
                                                    )
         line.track(bunch, num_turns=n_turns, with_progress=min_track_turns)
 
-        # In order to take the fc and bandwidth of the detector into consideration,
-        # Qx, Qy and band_width(in revolution frequency unit) need to be adjusted to fit fc
+        # # Another way to generate Schottky signal, but fixed sampling frequency
+        # freqs, x_psd = cal_psd_normal(monitor.x, f_rev)
+        # _, y_psd = cal_psd_normal(monitor.y, f_rev)
+        # _, z_psd = cal_psd_normal(monitor.zeta, f_rev)
+        # freqs /= f_rev
+        # plot(freqs, x_psd)
+        # plot(freqs, y_psd)
+        # plot(freqs, z_psd)
 
-        # band_width = 0.2
-        # deltaQ = 1e-5
-        # schottky_monitor.process_spectrum(inst_spectrum_len=int(n_turns / 1), deltaQ=deltaQ,
-        #                                   band_width=band_width,
-        #                                   Qx=qx, Qy=qy,
-        #                                   x=True, y=False, z=True,
-        #                                   flattop_window=True)
-        #
-        # plt.figure(figsize=(20, 16))
-        # ax1 = plt.subplot(1, 3, 1)
-        # ax2 = plt.subplot(1, 3, 2)
-        # ax3 = plt.subplot(1, 3, 3)
-        # for ax, region in zip([ax1, ax2, ax3], ['lowerH', 'center', 'upperH']):
-        #     PSD = schottky_monitor.PSD_avg[region]
-        #     ax.plot(schottky_monitor.frequencies[region], schottky_monitor.PSD_avg[region], color='b')
-        #     ax.set_xlabel(f'Frequency [$f_0$]')
-        #     ax.set_ylabel(f'PSD [arb. units]')
-        #     # ax.set_yscale('log')
-        # plt.tight_layout()
-        # plt.savefig(f"schottky_n_turns_{n_turns}.png")
-        # plt.show()
+
+        band_width = 0.05
+        deltaQ = 1e-4
+        schottky_monitor.process_spectrum(inst_spectrum_len=int(n_turns / 1), deltaQ=deltaQ,
+                                          band_width=band_width,
+                                          Qx=qx, Qy=qy,
+                                          x=True, y=False, z=True,
+                                          flattop_window=True)
+
+        plt.figure(figsize=(20, 16))
+        ax1 = plt.subplot(1, 3, 1)
+        ax2 = plt.subplot(1, 3, 2)
+        ax3 = plt.subplot(1, 3, 3)
+        for ax, region in zip([ax1, ax2, ax3], ['lowerH', 'center', 'upperH']):
+            ax.plot(schottky_monitor.frequencies[region], schottky_monitor.PSD_avg[region], color='b')
+            ax.set_xlabel(f'Frequency [$f_0$]')
+            ax.set_ylabel(f'PSD [arb. units]')
+            # ax.set_yscale('log')
+        plt.tight_layout()
+        plt.savefig(f"schottky_n_turns_{n_turns}.png")
+        plt.show()
+
+        # 创建结构化数组用于保存数据
+        data_to_save = np.column_stack((
+            schottky_monitor.frequencies['lowerH'],
+            schottky_monitor.PSD_avg['lowerH'],
+            schottky_monitor.frequencies['center'],
+            schottky_monitor.PSD_avg['center'],
+            schottky_monitor.frequencies['upperH'],
+            schottky_monitor.PSD_avg['upperH']
+        ))
+
+        # 生成带列标签的文件头
+        header = (
+            "# lowerH_frequency    lowerH_PSD    center_frequency    center_PSD    upperH_frequency    upperH_PSD"
+        )
+
+        # 保存到文本文件（科学计数法格式）
+        np.savetxt(
+            f"schottky_data.txt",
+            data_to_save,
+            fmt='%.6e',  # 控制精度为6位小数
+            delimiter='    ',  # 使用4空格分隔列
+            header=header,
+            comments=''  # 移除自动添加的注释符
+        )
 
         x_data = BPM.x_mean
-
-        mask_nan = np.isnan(x_data)
         # x_data = BPM.y_mean
         x_data = np.nan_to_num(x_data, nan=0)
-        # freq, clean_spectrum = cal_psd_normal(x_data, f_sampling)
-        # plot(freq, clean_spectrum)
         x_data, noise = generate_noisy_signal(x_data, snr, exclude_coherent=exclude_coherent)
-        # x_data_reshaped = windowed_reshape(x_data_reshaped, batch_size)
         x_data_reshaped, batch_size_processed = windowed_reshape(x_data, batch_size)
         noise_reshaped, _ = windowed_reshape(noise, batch_size)
         if not covered_by_detector(central_frequency=detector_parameters.fc, bandwidth=detector_parameters.bandwidth,
@@ -187,8 +216,6 @@ def tune_measurement_algorithm(synchrotron_parameters: SynchrotronConfiguration,
         w1, w2 = kf.detector_weights()
         w1_list.append(w1)
         w2_list.append(w2)
-        # kf.predict()
-        # q_pred = kf.update(0.5*q_measured + 0.5*q_ref)[0][0]
         q_ref_list.append(q_ref)
         q_predicted_list.append(q_pred)
         distance = normalize_to_01(abs(tune_unit[index_bool_maxima] - (q_ref + q_pred) / 2)) - 1
