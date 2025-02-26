@@ -9,52 +9,58 @@ from scipy.optimize import curve_fit
 import bisect
 import pickle
 from scipy.interpolate import interp1d, CubicSpline, lagrange, UnivariateSpline
+from collections import deque
 
 
 def fix_anomaly(data: list, value: float, max_len: int, outliers_threshold_coef: float) -> float:
+    data = np.asarray(data)
     if len(data) >= max_len // 2:  # 降低有效数据阈值
         # ===== 改进1：使用鲁棒的统计量 =====
         diffs = np.diff(data)
 
         # 使用绝对中位差替代标准差
         mad = np.median(np.abs(diffs - np.median(diffs)))
-        threshold = outliers_threshold_coef * (1.4826 * mad)  # MAD到标准差的换算系数
+        threshold = max(outliers_threshold_coef * (1.4826 * mad), 1e-6)  # MAD到标准差的换算系数，确保非零阈值
 
         # ===== 改进2：趋势估计优化 =====
         # 使用中位数差分作为趋势基准
-        median_diff = np.median(diffs)
-
-        # 排除最近3个点的局部波动（防止异常点污染趋势）
-        if len(diffs) > 3:
-            stable_diff = np.median(diffs[-3:])
-        else:
-            stable_diff = median_diff
+        stable_diff = np.median(diffs[-3:]) if len(diffs) > 3 else np.median(diffs)
 
         # ===== 改进3：动态阈值调整 =====
         current_diff = value - data[-1]
-        deviation_ratio = np.abs(current_diff) / (threshold + 1e-6)  # 防止除零
+        deviation_ratio = np.abs(current_diff) / threshold  # 防止除零
 
         # ===== 改进4：分级异常处理 =====
         if deviation_ratio > 2.0:  # 严重异常
             corrected = data[-1] + stable_diff
         elif deviation_ratio > 1.0:  # 一般异常
-            # 混合全局趋势和局部趋势
-            corrected = data[-1] + 0.7 * stable_diff + 0.3 * median_diff
+            corrected = data[-1] + 0.7 * stable_diff + 0.3 * np.median(diffs)
         else:  # 正常数据
             return value
 
         # ===== 改进5：防止连续修正累积误差 =====
         if len(data) >= max_len:
             # 对比修正值与历史趋势的匹配度
-            history_trend = np.polyfit(range(len(data)), data, 1)[0]
-            trend_diff = np.abs(corrected - data[-1] - history_trend)
+            # 使用最近max_len个数据进行2次多项式拟合
+            recent_data = data[-max_len:]
+            x = np.arange(len(recent_data))
+            coeffs = np.polyfit(x, recent_data, 2)
+            # 预测下一个点的位置
+            x_next = len(recent_data)
+            predicted_next = np.polyval(coeffs, x_next)
+            # 将预测增量与当前最后一个数据的差值作为历史趋势
+            history_trend = predicted_next - data[-1]
+            trend_diff = np.abs(corrected - (data[-1] + history_trend))
 
             # 趋势偏离过大时回归历史趋势
-            if trend_diff > 2 * threshold:
+            dynamic_threshold = max(2 * threshold, 0.1 * np.abs(history_trend), 1e-3)
+
+            if trend_diff > dynamic_threshold:
                 corrected = data[-1] + history_trend
 
         # ===== 平滑过渡 =====
-        return 0.3 * corrected + 0.7 * value  # 混合原始值和修正值
+        print("Anomaly spotted!")
+        return 0.5 * corrected + 0.5 * value  # 调整平滑参数，增强修正稳定性
     return value
 
 def interpolation(data: np.ndarray, interpolate_method: str="cubic", interpolate_coef: float=1) -> np.ndarray:
@@ -651,24 +657,24 @@ def find_local_minima(psd: np.ndarray) -> (list ,list):
     index_bool[index_value] = True
     return index_bool.tolist(), index_value
 
-from collections import deque
-
 class q_queue:
-    def __init__(self, max_len, decay_factor=0.85):
+    def __init__(self, max_len, decay_factor=0.45):
         self.max_len = max_len
         self.q_queue = deque(maxlen=max_len)
         # self.q_queue.extend(np.zeros(self.max_len))
         self.decay_factor = decay_factor
         self.first_append = True
-        self.psd = []
+        self.psd = 0
         self.tune_unit = []
     def append(self, q, tune_unit, psd):
         if self.first_append:
             self.psd = np.zeros_like(psd)
             self.first_append = False
         self.q_queue.append(q)
-        self.psd += psd
-        self.psd *= self.decay_factor
+        # Exponential Moving Average
+        self.psd = self.decay_factor*self.psd + (1 - self.decay_factor)*psd
+        # self.psd += psd
+        # self.psd *= self.decay_factor
         self.tune_unit = tune_unit
     def q_ref(self):
         return self.tune_unit[np.argmax(self.psd)]
@@ -730,7 +736,8 @@ class DualDetectorAdaptiveKalmanFilter:
             process_noise=0.06,
             measurement_noise=2.6 ** 2,  # 初始测量噪声同时赋给两个探测器
             max_len=8,
-            alpha=0.3, alpha_range=(0.1, 0.5)
+            alpha=0.4
+            # , alpha_range=(0.3, 0.5)
     ):
         # 状态估计初始化
         self.x = initial_state
@@ -749,10 +756,10 @@ class DualDetectorAdaptiveKalmanFilter:
         # 残差滑动窗口（每个探测器独立）
         self.window1 = deque(maxlen=max_len)  # 探测器1的残差窗口
         self.window2 = deque(maxlen=max_len)  # 探测器2的残差窗口
-        self.residual_history = deque(maxlen=5)
+        # self.residual_history = deque(maxlen=5)
 
         self.alpha = alpha
-        self.alpha_min, self.alpha_max = alpha_range
+        # self.alpha_min, self.alpha_max = alpha_range
 
     def predict_update(self, z1, z2):
         """基于双探测器的自适应预测-更新步骤"""
@@ -782,14 +789,15 @@ class DualDetectorAdaptiveKalmanFilter:
         # ----------- 参数自适应 -----------
         # 计算各探测器的残差（基于预测值）
         # 记录残差历史（用于alpha调整）
-        self.residual_history.append(abs(residual_fused))
-
-        # 动态调整alpha（基于最近残差均值）
-        if len(self.residual_history) >= 3:
-            avg_residual = np.mean(self.residual_history)
-            # alpha与残差大小正相关（S型曲线调整）
-            self.alpha = self.alpha_min + (self.alpha_max - self.alpha_min) * \
-                         (avg_residual / (avg_residual + 0.5))  # 0.5为平滑系数
+        # self.residual_history.append(abs(residual_fused))
+        #
+        # # 动态调整alpha（基于最近残差均值）
+        # if len(self.residual_history) >= 3:
+        #     avg_residual = np.mean(self.residual_history)
+        #     # alpha与残差大小正相关（S型曲线调整）
+        #     self.alpha = self.alpha_min + (self.alpha_max - self.alpha_min) * \
+        #                  (avg_residual / (avg_residual + 0.5))  # 0.5为平滑系数
+        # self.alpha = 0.5
         residual1 = z1 - x_pred
         residual2 = z2 - x_pred
 
