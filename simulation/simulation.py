@@ -130,51 +130,51 @@ def tune_measurement_algorithm(synchrotron_parameters: SynchrotronConfiguration,
         # plot(freqs, z_psd)
 
 
-        band_width = 0.05
-        deltaQ = 1e-4
-        schottky_monitor.process_spectrum(inst_spectrum_len=int(n_turns / 1), deltaQ=deltaQ,
-                                          band_width=band_width,
-                                          Qx=qx, Qy=qy,
-                                          x=True, y=False, z=True,
-                                          flattop_window=True)
-
-        plt.figure(figsize=(20, 16))
-        ax1 = plt.subplot(1, 3, 1)
-        ax2 = plt.subplot(1, 3, 2)
-        ax3 = plt.subplot(1, 3, 3)
-        for ax, region in zip([ax1, ax2, ax3], ['lowerH', 'center', 'upperH']):
-            ax.plot(schottky_monitor.frequencies[region], schottky_monitor.PSD_avg[region], color='b')
-            ax.set_xlabel(f'Frequency [$f_0$]')
-            ax.set_ylabel(f'PSD [arb. units]')
-            # ax.set_yscale('log')
-        plt.tight_layout()
-        plt.savefig(f"schottky_n_turns_{n_turns}.png")
-        plt.show()
-
-        # 创建结构化数组用于保存数据
-        data_to_save = np.column_stack((
-            schottky_monitor.frequencies['lowerH'],
-            schottky_monitor.PSD_avg['lowerH'],
-            schottky_monitor.frequencies['center'],
-            schottky_monitor.PSD_avg['center'],
-            schottky_monitor.frequencies['upperH'],
-            schottky_monitor.PSD_avg['upperH']
-        ))
-
-        # 生成带列标签的文件头
-        header = (
-            "# lowerH_frequency    lowerH_PSD    center_frequency    center_PSD    upperH_frequency    upperH_PSD"
-        )
-
-        # 保存到文本文件（科学计数法格式）
-        np.savetxt(
-            f"schottky_data.txt",
-            data_to_save,
-            fmt='%.6e',  # 控制精度为6位小数
-            delimiter='    ',  # 使用4空格分隔列
-            header=header,
-            comments=''  # 移除自动添加的注释符
-        )
+        # band_width = 0.05
+        # deltaQ = 1e-4
+        # schottky_monitor.process_spectrum(inst_spectrum_len=int(n_turns / 1), deltaQ=deltaQ,
+        #                                   band_width=band_width,
+        #                                   Qx=qx, Qy=qy,
+        #                                   x=True, y=False, z=True,
+        #                                   flattop_window=True)
+        #
+        # plt.figure(figsize=(20, 16))
+        # ax1 = plt.subplot(1, 3, 1)
+        # ax2 = plt.subplot(1, 3, 2)
+        # ax3 = plt.subplot(1, 3, 3)
+        # for ax, region in zip([ax1, ax2, ax3], ['lowerH', 'center', 'upperH']):
+        #     ax.plot(schottky_monitor.frequencies[region], schottky_monitor.PSD_avg[region], color='b')
+        #     ax.set_xlabel(f'Frequency [$f_0$]')
+        #     ax.set_ylabel(f'PSD [arb. units]')
+        #     # ax.set_yscale('log')
+        # plt.tight_layout()
+        # plt.savefig(f"schottky_n_turns_{n_turns}.png")
+        # plt.show()
+        #
+        # # 创建结构化数组用于保存数据
+        # data_to_save = np.column_stack((
+        #     schottky_monitor.frequencies['lowerH'],
+        #     schottky_monitor.PSD_avg['lowerH'],
+        #     schottky_monitor.frequencies['center'],
+        #     schottky_monitor.PSD_avg['center'],
+        #     schottky_monitor.frequencies['upperH'],
+        #     schottky_monitor.PSD_avg['upperH']
+        # ))
+        #
+        # # 生成带列标签的文件头
+        # header = (
+        #     "# lowerH_frequency    lowerH_PSD    center_frequency    center_PSD    upperH_frequency    upperH_PSD"
+        # )
+        #
+        # # 保存到文本文件（科学计数法格式）
+        # np.savetxt(
+        #     f"schottky_data.txt",
+        #     data_to_save,
+        #     fmt='%.6e',  # 控制精度为6位小数
+        #     delimiter='    ',  # 使用4空格分隔列
+        #     header=header,
+        #     comments=''  # 移除自动添加的注释符
+        # )
 
         x_data = BPM.x_mean
         # x_data = BPM.y_mean
