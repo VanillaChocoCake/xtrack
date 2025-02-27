@@ -26,6 +26,8 @@ frequency_rf = 7.48e6
 lag_rf = 180
 dqx = -1.46
 dqy = -1.34
+nemitt = 2*np.pi*1e-6
+intensity = int(1e11)
 
 
 class SynchrotronConfiguration:
@@ -55,7 +57,9 @@ class SynchrotronConfiguration:
                  frequency_rf=frequency_rf,
                  lag_rf=lag_rf,
                  dqx=dqx,
-                 dqy=dqy):
+                 dqy=dqy,
+                 nemitt=nemitt,
+                 intensity=intensity):
         self.length = length
         self.qx = qx
         self.qy = qy
@@ -82,6 +86,8 @@ class SynchrotronConfiguration:
         self.lag_rf = lag_rf
         self.dqx = dqx
         self.dqy = dqy
+        self.nemitt = nemitt
+        self.intensity = intensity
 
 
 bandwidth = 3e6  # Hz
@@ -107,12 +113,10 @@ line_shape = "cos"
 f_rev_mode = 7.5e6
 alpha = 0.45
 exclude_coherent = False
-schottky_harmonic = 2
+schottky_harmonic = 0.5
 interpolate_method = "cubic"
 interpolate_coef = 2
-outliers_len = 20
-outliers_threshold_coef = 2
-filter = "gaussian"
+smoothing_method = "gaussian"
 
 class AlgorithmConfiguration:
     def __init__(self,
@@ -131,8 +135,7 @@ class AlgorithmConfiguration:
                  schottky_harmonic=schottky_harmonic,
                  interpolate_method=interpolate_method,
                  interpolate_coef=interpolate_coef,
-                 outliers_threshold_coef=outliers_threshold_coef,
-                 filter=filter):
+                 smoothing_method=smoothing_method):
         self.sideband_width = sideband_width
         self.f_rev_increase_rate = f_rev_increase_rate
         self.min_track_turns = min_track_turns
@@ -148,6 +151,4 @@ class AlgorithmConfiguration:
         self.schottky_harmonic = schottky_harmonic
         self.interpolate_method = interpolate_method
         self.interpolate_coef = interpolate_coef
-        self.outliers_len = outliers_len
-        self.outliers_threshold_coef = outliers_threshold_coef
-        self.filter = filter
+        self.smoothing_method = smoothing_method

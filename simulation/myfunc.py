@@ -27,56 +27,56 @@ def load_matlab_v73(filename: str, variable_name: str):
         else:
             raise KeyError(f"变量 {variable_name} 不存在于文件中")
 
-def fix_anomaly(data: list, value: float, max_len: int, outliers_threshold_coef: float) -> float:
-    data = np.asarray(data)
-    if len(data) >= max_len // 2:  # 降低有效数据阈值
-        # ===== 改进1：使用鲁棒的统计量 =====
-        diffs = np.diff(data)
-
-        # 使用绝对中位差替代标准差
-        mad = np.median(np.abs(diffs - np.median(diffs)))
-        threshold = max(outliers_threshold_coef * (1.4826 * mad), 1e-6)  # MAD到标准差的换算系数，确保非零阈值
-
-        # ===== 改进2：趋势估计优化 =====
-        # 使用中位数差分作为趋势基准
-        stable_diff = np.median(diffs[-3:]) if len(diffs) > 3 else np.median(diffs)
-
-        # ===== 改进3：动态阈值调整 =====
-        current_diff = value - data[-1]
-        deviation_ratio = np.abs(current_diff) / threshold  # 防止除零
-
-        # ===== 改进4：分级异常处理 =====
-        if deviation_ratio > 2.0:  # 严重异常
-            corrected = data[-1] + stable_diff
-        elif deviation_ratio > 1.0:  # 一般异常
-            corrected = data[-1] + 0.7 * stable_diff + 0.3 * np.median(diffs)
-        else:  # 正常数据
-            return value
-
-        # ===== 改进5：防止连续修正累积误差 =====
-        if len(data) >= max_len:
-            # 对比修正值与历史趋势的匹配度
-            # 使用最近max_len个数据进行2次多项式拟合
-            recent_data = data[-max_len:]
-            x = np.arange(len(recent_data))
-            coeffs = np.polyfit(x, recent_data, 2)
-            # 预测下一个点的位置
-            x_next = len(recent_data)
-            predicted_next = np.polyval(coeffs, x_next)
-            # 将预测增量与当前最后一个数据的差值作为历史趋势
-            history_trend = predicted_next - data[-1]
-            trend_diff = np.abs(corrected - (data[-1] + history_trend))
-
-            # 趋势偏离过大时回归历史趋势
-            dynamic_threshold = max(2 * threshold, 0.1 * np.abs(history_trend), 1e-3)
-
-            if trend_diff > dynamic_threshold:
-                corrected = data[-1] + history_trend
-
-        # ===== 平滑过渡 =====
-        print("Anomaly spotted!")
-        return 0.5 * corrected + 0.5 * value  # 调整平滑参数，增强修正稳定性
-    return value
+# def fix_anomaly(data: list, value: float, max_len: int, outliers_threshold_coef: float) -> float:
+#     data = np.asarray(data)
+#     if len(data) >= max_len // 2:  # 降低有效数据阈值
+#         # ===== 改进1：使用鲁棒的统计量 =====
+#         diffs = np.diff(data)
+#
+#         # 使用绝对中位差替代标准差
+#         mad = np.median(np.abs(diffs - np.median(diffs)))
+#         threshold = max(outliers_threshold_coef * (1.4826 * mad), 1e-6)  # MAD到标准差的换算系数，确保非零阈值
+#
+#         # ===== 改进2：趋势估计优化 =====
+#         # 使用中位数差分作为趋势基准
+#         stable_diff = np.median(diffs[-3:]) if len(diffs) > 3 else np.median(diffs)
+#
+#         # ===== 改进3：动态阈值调整 =====
+#         current_diff = value - data[-1]
+#         deviation_ratio = np.abs(current_diff) / threshold  # 防止除零
+#
+#         # ===== 改进4：分级异常处理 =====
+#         if deviation_ratio > 2.0:  # 严重异常
+#             corrected = data[-1] + stable_diff
+#         elif deviation_ratio > 1.0:  # 一般异常
+#             corrected = data[-1] + 0.7 * stable_diff + 0.3 * np.median(diffs)
+#         else:  # 正常数据
+#             return value
+#
+#         # ===== 改进5：防止连续修正累积误差 =====
+#         if len(data) >= max_len:
+#             # 对比修正值与历史趋势的匹配度
+#             # 使用最近max_len个数据进行2次多项式拟合
+#             recent_data = data[-max_len:]
+#             x = np.arange(len(recent_data))
+#             coeffs = np.polyfit(x, recent_data, 2)
+#             # 预测下一个点的位置
+#             x_next = len(recent_data)
+#             predicted_next = np.polyval(coeffs, x_next)
+#             # 将预测增量与当前最后一个数据的差值作为历史趋势
+#             history_trend = predicted_next - data[-1]
+#             trend_diff = np.abs(corrected - (data[-1] + history_trend))
+#
+#             # 趋势偏离过大时回归历史趋势
+#             dynamic_threshold = max(2 * threshold, 0.1 * np.abs(history_trend), 1e-3)
+#
+#             if trend_diff > dynamic_threshold:
+#                 corrected = data[-1] + history_trend
+#
+#         # ===== 平滑过渡 =====
+#         print("Anomaly spotted!")
+#         return 0.5 * corrected + 0.5 * value  # 调整平滑参数，增强修正稳定性
+#     return value
 
 def interpolation(data: np.ndarray, interpolate_method: str="cubic", interpolate_coef: float=1) -> np.ndarray:
     batch_size = len(data)
@@ -128,34 +128,33 @@ def exclude_coherent_spectrum(tune_unit: np.ndarray, spectrum: np.ndarray, side_
     spectrum /= coef
     return spectrum
 
-# def exclude_coherent_signal(t: np.ndarray, y: np.ndarray, frequency: float, exclude_coherent:bool=False) -> np.ndarray:
-#     def harmonic_model(t, A, f, phi):
-#         return A * np.sin(2 * np.pi * f * t + phi)
-#     if exclude_coherent:
-#         p0 = [max(y), frequency, 0]
-#         params, _ = curve_fit(harmonic_model, xdata=t, ydata=y, p0=p0)
-#         A_fit, f_fit, phi_fit = params
-#         fitted_harmonic = harmonic_model(t, A_fit, f_fit, phi_fit)
-#         residual_signal = y - fitted_harmonic
-#         return residual_signal
-#     else:
-#         return y
-
-def exclude_coherent_signal(t: np.ndarray, y: np.ndarray, f_sampling: float, frequency: float, exclude_coherent:bool=False) -> np.ndarray:
+def exclude_frequency_component(t: np.ndarray, y: np.ndarray, frequency: float) -> np.ndarray:
     def harmonic_model(t, A, f, phi):
         return A * np.sin(2 * np.pi * f * t + phi)
-    if exclude_coherent:
-        freqs, psd = cal_psd_normal(y, f_sampling)
-        mask = freqs > 0
-        freqs = freqs[mask]
-        psd = psd[mask]
-        psd -= np.min(psd)
-        psd /= np.max(psd)
+    p0 = [max(y), frequency, 0]
+    params, _ = curve_fit(harmonic_model, xdata=t, ydata=y, p0=p0)
+    A_fit, f_fit, phi_fit = params
+    fitted_harmonic = harmonic_model(t, A_fit, f_fit, phi_fit)
+    residual_signal = y - fitted_harmonic
+    return residual_signal
 
-
-
+def exclude_coherent_signal(t: np.ndarray, y: np.ndarray, f_sampling: float, freqs_range: np.ndarray[float, float]) -> np.ndarray:
+    freqs, psd = cal_psd(y, f_sampling)
+    if freqs_range is not [None, None]:
+        mask = (freqs >= freqs_range[0]) & (freqs <= freqs_range[1])
     else:
-        return y
+        mask = freqs > 0
+    freqs = freqs[mask]
+    psd = psd[mask]
+    psd -= np.min(psd)
+    psd /= np.max(psd)
+    index_bool, index_value = find_local_maxima(psd)
+    coherent_frequencies = psd >= 0.4
+    frequencies_to_exclude_bool = index_bool & coherent_frequencies
+    frequencies_to_exclude = freqs[frequencies_to_exclude_bool]
+    for coherent_frequency in frequencies_to_exclude:
+        y = exclude_frequency_component(t, y, coherent_frequency)
+    return y
 
 def covered_by_detector(central_frequency: float,
                         bandwidth: float,
@@ -236,17 +235,17 @@ def find_closest_values(a: float, b: np.ndarray) -> tuple:
     """
     b = b.tolist()
     if len(b) == 0:  # 处理空数组
-        return -1, 65535
+        return None, None
 
     # 查找插入位置
     left_pos = bisect.bisect_left(b, a)
     right_pos = bisect.bisect_right(b, a)
 
     # 查找比a小的最大数
-    lower = b[left_pos - 1] if left_pos > 0 else -1
+    lower = b[left_pos - 1] if left_pos > 0 else None
 
     # 查找比a大的最小数
-    upper = b[right_pos] if right_pos < len(b) else 65535
+    upper = b[right_pos] if right_pos < len(b) else None
 
     return lower, upper
 
@@ -312,8 +311,7 @@ def plot(x: np.ndarray, y: np.ndarray=None):
         plt.plot(x, y)
     plt.show()
 
-
-def cal_psd_normal(data: np.ndarray, f_sampling: float = None) -> tuple:
+def cal_psd(data: np.ndarray, f_sampling: float = None) -> tuple:
     psd = fft(data, axis=-1)
     psd = fftshift(psd, axes=-1)
     if f_sampling:
@@ -329,16 +327,15 @@ def cal_psd_normal(data: np.ndarray, f_sampling: float = None) -> tuple:
     psd = np.clip(psd, 0, None)
     return full_freqs, psd
 
-def cal_psd(x_data: np.ndarray, noise: np.ndarray,
-            batch_size: int,
-            f_sampling: float,
-            window_size: int,
-            f_rev: float,
-            tune_unit_lower_limit: float, tune_unit_upper_limit: float,
-            filter: str="gaussian",
-            interpolate_method: str="cubic", interpolate_coef: float=1,
-            snr: float=-20, side_point_num: int=None, exclude_coherent:bool=False,
-            procedure: int=1) -> tuple:
+def spectral_processing(x_data: np.ndarray,
+                        batch_size: int,
+                        f_sampling: float,
+                        window_size: int,
+                        f_rev: float,
+                        tune_unit_lower_limit: float, tune_unit_upper_limit: float,
+                        smoothing_method: str= "gaussian",
+                        interpolate_method: str="cubic", interpolate_coef: float=1,
+                        procedure: int=1) -> tuple:
     """
     procedure=1: fold -> sum -> filter
     procedure=2: fold -> filter -> sum
@@ -353,6 +350,8 @@ def cal_psd(x_data: np.ndarray, noise: np.ndarray,
         raise ValueError(f"批次大小不一致 {samples} vs {batch_size}")
     if interpolate_method is None:
         interpolate_coef = 1
+    if procedure not in [1, 2]:
+        raise ValueError('"procedure" should be either 1 (fold -> sum -> smoothing) or 2 (fold -> smoothing -> sum).')
 
     # ==================================================================
     # 预计算全局参数 (避免循环内重复计算)
@@ -375,51 +374,35 @@ def cal_psd(x_data: np.ndarray, noise: np.ndarray,
     # 批量PSD计算
     psd_all = np.abs(spectra_shifted) ** 2 / (batch_size * f_sampling)
 
-    if exclude_coherent:
-        spectra_noise = fft(noise, axis=1)
-        spectra_noise_shifted = fftshift(spectra_noise, axes=1)
-        psd_noise_all = np.abs(spectra_noise_shifted) ** 2 / (batch_size * f_sampling)
-        # 批量滤波和折叠 (需保留循环但优化内存访问)
-        for i in range(num_batches):
-            # raise ValueError("You haven't debugged this part yet!")
-            psd = psd_all[i]
-            # psd = interpolation(psd, interpolate_method, interpolate_coef)
-            _, folded = fold_spectrum(psd, f_rev, f_sampling)
-            folded = exclude_coherent_spectrum(tune_unit, folded, side_point_num)
-            psd_noise = psd_noise_all[i, 0: len(folded)]
-            # snr_linear = 10**(snr/10)
-            # P_noise_target = np.sum(folded)/snr_linear
-            # P_noise = np.sum(psd_noise)
-            # psd_noise *= (P_noise_target/P_noise)
-            psd_matrix[i] = folded + psd_noise
-    else:
-        # 批量滤波和折叠 (需保留循环但优化内存访问)
-        for i in range(num_batches):
-            psd = psd_all[i]
-            _, folded = fold_spectrum(psd, f_rev, f_sampling)
-            if procedure == 1:
-                # fold -> sum -> filter
-                psd_matrix[i] = folded
-            elif procedure == 2:
-                # fold -> filter -> sum
-                if filter == "gaussian":
-                    filtered = gaussian_filter(folded, window_size)
-                else:
-                    filtered = savgol_filter(psd, window_size, 5)
-                filtered = interpolation(filtered, "univariate", 1.0)
-                psd_matrix[i] = filtered
+    # 批量滤波和折叠 (需保留循环但优化内存访问)
+    for i in range(num_batches):
+        psd = psd_all[i]
+        _, folded = fold_spectrum(psd, f_rev, f_sampling)
+        if procedure == 1:
+            # fold -> sum -> smoothing
+            psd_matrix[i] = folded
+        elif procedure == 2:
+            # fold -> smoothing -> sum
+            if smoothing_method == "gaussian":
+                filtered = gaussian_filter(folded, window_size)
+            else:
+                filtered = savgol_filter(psd, window_size, 5)
+            filtered = interpolation(filtered, "univariate", 1.0)
+            psd_matrix[i] = filtered
+
+
 
     if procedure == 1:
-        # fold -> sum -> filter
+        # fold -> sum -> smoothing
         final_psd = psd_matrix.sum(axis=0)
-        if filter == "gaussian":
+        if smoothing_method == "gaussian":
             final_psd = gaussian_filter(final_psd, window_size)
         else:
             final_psd = savgol_filter(final_psd, window_size, 5)
         # final_psd = interpolation(final_psd, "univariate", 1.0)
         final_psd = final_psd[freq_mask]
     elif procedure == 2:
-        # fold -> filter -> sum
+        # fold -> smoothing -> sum
         final_psd = psd_matrix[:, freq_mask].sum(axis=0)
     final_psd /= np.min(final_psd)
     final_psd = interpolation(final_psd, interpolate_method, interpolate_coef)
@@ -435,7 +418,7 @@ def cal_psd(x_data: np.ndarray, noise: np.ndarray,
     final_psd = np.clip(final_psd, 0, None)  # 确保非负
     return final_tune_unit, final_psd
 
-def windowed_reshape(arr: np.ndarray, batch_size: int) -> tuple:
+def windowed_reshape(arr: np.ndarray, batch_size: int) -> np.ndarray:
     """
     将一维数组分批次并应用汉明窗
     :param arr: 输入一维数组
@@ -452,7 +435,7 @@ def windowed_reshape(arr: np.ndarray, batch_size: int) -> tuple:
     # 重塑并逐行加窗
     reshaped = arr.reshape(-1, batch_size)
     window = hamming(batch_size)
-    return reshaped*window, batch_size
+    return reshaped*window
 
 def predict_next_point(x_data: np.ndarray) -> float:
     """
@@ -509,7 +492,7 @@ def apply_bandpass_filter(x_data: np.ndarray, fs: float,
 
     return filtered_data
 
-def generate_noisy_signal(x_data: np.ndarray, snr_db: float, exclude_coherent:bool=False) -> tuple:
+def generate_noisy_signal(x_data: np.ndarray, snr_db: float) -> tuple:
     """
     生成满足指定信噪比的高斯噪声，并计算缩放系数a
     :param x_data: 原始信号（一维数组）
@@ -532,10 +515,8 @@ def generate_noisy_signal(x_data: np.ndarray, snr_db: float, exclude_coherent:bo
 
     # 生成加噪后的信号
     noisy_signal = a * x_data + n
-    if exclude_coherent:
-        return a * x_data, n
-    else:
-        return noisy_signal, n
+    return noisy_signal, n
+
 
 def normalize_to_01(x_data: np.ndarray) -> np.ndarray:
     """
@@ -604,7 +585,7 @@ def fold_spectrum(spectrum: np.ndarray, f_rev: float, f_sampling: float) -> tupl
         折叠后的功率谱密度
     """
     # 验证输入条件
-    assert f_sampling % (2 * f_rev) == 0, "f_sampling必须是f_rev的偶数倍"
+    # assert f_sampling % (2 * f_rev) == 0, "f_sampling必须是f_rev的偶数倍"
 
     n = len(spectrum) # 生成频率轴
     freqs = np.linspace(-f_sampling / 2, f_sampling / 2, n)
@@ -712,11 +693,11 @@ class q_queue:
         self.tune_unit = tune_unit
     def q_ref(self):
         return self.tune_unit[np.argmax(self.psd)]
-    def q_pred(self):
-        if self.q_queue.__len__() <= 2:
-            return self.q_ref()
-        else:
-            return predict_next_point(np.array(self.q_queue))
+    # def q_pred(self):
+    #     if self.q_queue.__len__() <= 2:
+    #         return self.q_ref()
+    #     else:
+    #         return predict_next_point(np.array(self.q_queue))
 
 class AdaptiveKalmanFilter:
     def __init__(self, initial_state=0.5, initial_estimate_error=1, process_noise=0.06, measurement_noise=2.6**2):

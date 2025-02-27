@@ -30,9 +30,7 @@ def tune_measurement_algorithm(synchrotron_parameters: SynchrotronConfiguration,
     schottky_harmonic = algorithm_parameters.schottky_harmonic
     interpolate_method = algorithm_parameters.interpolate_method
     interpolate_coef = algorithm_parameters.interpolate_coef
-    outliers_len = algorithm_parameters.outliers_len
-    outliers_threshold_coef = algorithm_parameters.outliers_threshold_coef
-    filter = algorithm_parameters.filter
+    smoothing_method = algorithm_parameters.smoothing_method
 
     q_prev_queue = q_queue(max_len=max_len, decay_factor=decay_factor)
     if synchrotron_parameters.qx > 0.5:
@@ -64,14 +62,16 @@ def tune_measurement_algorithm(synchrotron_parameters: SynchrotronConfiguration,
     w1_list = []
     w2_list = []
     failed_to_detect = np.zeros_like(f_rev_range, dtype=bool)
-    batch_size = int(2 ** np.ceil(np.log2(2 * schottky_harmonic * np.max(f_rev_range) / min_freq_res)))
+    # batch_size = int(2 ** np.ceil(np.log2(2 * schottky_harmonic * np.max(f_rev_range) / min_freq_res)))
+    batch_size = int(2 ** np.ceil(np.log2(np.max(f_rev_range) / min_freq_res)))
     # kf = AdaptiveKalmanFilter(initial_state=qx)
     kf = DualDetectorAdaptiveKalmanFilter(initial_state=qx)
     q_measured = 0.3
     for i in range(len(qx_list)):
+        print(i)
+        # Part Simulation
         qy = qy_list[i]
         qx = qx_list[i]
-        qx = 0.68
         qx = float(qx)
         qy = float(qy)
         lmap = xt.LineSegmentMap(length=synchrotron_parameters.length,
@@ -88,18 +88,15 @@ def tune_measurement_algorithm(synchrotron_parameters: SynchrotronConfiguration,
         f_rev = f_rev_range[i]
         print("f_rev:", f_rev)
         f_sampling = 2 * schottky_harmonic * f_rev
-        band_width = detector_parameters.bandwidth / f_rev
         freq_res = f_sampling / batch_size
-        deltaQ = freq_res / f_rev
         side_point_num = sideband_width // (2 * freq_res) + 1
         window_size = int(max(3, side_point_num // 4))
-        # window_size = batch_size // (2*schottky_harmonic*2) // 20
         n_turns = int(np.floor(f_rev * simulation_time / min_track_turns) * min_track_turns)
 
         line = xt.Line(elements=[lmap])
         line.discard_tracker()
         # monitor = xt.ParticlesMonitor(_context=context, start_at_turn=1, stop_at_turn=n_turns, num_particles=int(1e3))
-        # schottky_monitor = xt.SchottkyMonitor(f_rev=f_rev, schottky_harmonic=5, n_taylor=32)
+        # schottky_monitor = xt.SchottkyMonitor(f_rev=f_rev, schottky_harmonic=np.ceil(schottky_harmonic), n_taylor=32)
         BPM = xt.BeamPositionMonitor(frev=f_rev,
                                      start_at_turn=0, stop_at_turn=n_turns,
                                      sampling_frequency=f_sampling)
@@ -113,17 +110,17 @@ def tune_measurement_algorithm(synchrotron_parameters: SynchrotronConfiguration,
         energy0 = gamma * xt.PROTON_MASS_EV
         line.particle_ref = xt.Particles(mass0=xt.PROTON_MASS_EV, q0=1, _context=context, energy0=energy0)
         bunch = xp.generate_matched_gaussian_bunch(num_particles=int(1e3),
-                                                   nemitt_x=2 * np.pi * 1e-6, nemitt_y=2 * np.pi * 1e-6,
+                                                   nemitt_x=nemitt, nemitt_y=nemitt,
                                                    line=line,
-                                                   total_intensity_particles=int(1e11),
+                                                   total_intensity_particles=synchrotron_parameters.intensity,
                                                    sigma_z=synchrotron_parameters.length / 8
                                                    )
         line.track(bunch, num_turns=n_turns, with_progress=min_track_turns)
 
         # # Another way to generate Schottky signal, but fixed sampling frequency
-        # freqs, x_psd = cal_psd_normal(monitor.x, f_rev)
-        # _, y_psd = cal_psd_normal(monitor.y, f_rev)
-        # _, z_psd = cal_psd_normal(monitor.zeta, f_rev)
+        # freqs, x_psd = cal_psd(monitor.x, f_rev)
+        # _, y_psd = cal_psd(monitor.y, f_rev)
+        # _, z_psd = cal_psd(monitor.zeta, f_rev)
         # freqs /= f_rev
         # plot(freqs, x_psd)
         # plot(freqs, y_psd)
@@ -176,73 +173,96 @@ def tune_measurement_algorithm(synchrotron_parameters: SynchrotronConfiguration,
         #     comments=''  # 移除自动添加的注释符
         # )
 
+        # Part Algorithm
         x_data = BPM.x_mean
         # x_data = BPM.y_mean
         x_data = np.nan_to_num(x_data, nan=0)
-        x_data, noise = generate_noisy_signal(x_data, snr, exclude_coherent=exclude_coherent)
-        x_data_reshaped, batch_size_processed = windowed_reshape(x_data, batch_size)
-        noise_reshaped, _ = windowed_reshape(noise, batch_size)
+        t = np.linspace(0, len(x_data)/f_sampling, len(x_data))
+        if exclude_coherent:
+            x_data = exclude_coherent_signal(t, x_data, f_sampling, np.array([0.21, 0.49])*f_rev)
+        x_data, noise = generate_noisy_signal(x_data, snr)
+        x_data_reshaped = windowed_reshape(x_data, batch_size)
+        noise_reshaped = windowed_reshape(noise, batch_size)
+
+        common_spectral_params = {
+            'batch_size': batch_size,
+            'f_sampling': f_sampling,
+            'window_size': window_size,
+            'f_rev': f_rev,
+            'tune_unit_lower_limit': lower_limit,
+            'tune_unit_upper_limit': upper_limit,
+            'smoothing_method': smoothing_method,
+            'interpolate_method': interpolate_method,
+            'interpolate_coef': interpolate_coef,
+        }
         if not covered_by_detector(central_frequency=detector_parameters.fc, bandwidth=detector_parameters.bandwidth,
                                    sideband_width=sideband_width,
                                    tune=qx, current_frequency=f_rev):
-            tune_unit, psd = cal_psd(x_data=noise_reshaped, noise=noise_reshaped, batch_size=batch_size_processed,
-                                     f_sampling=f_sampling, window_size=window_size, f_rev=f_rev,
-                                     tune_unit_lower_limit=lower_limit, tune_unit_upper_limit=upper_limit,
-                                     side_point_num=side_point_num, snr=snr,
-                                     filter=filter,
-                                     interpolate_method=interpolate_method, interpolate_coef=interpolate_coef,
-                                     exclude_coherent=False)
+            tune_unit, psd = spectral_processing(x_data=noise_reshaped, **common_spectral_params)
             failed_to_detect[i] = True
             print(f"Betatron tune can not be measured at this frequency.")
         else:
-            tune_unit, psd = cal_psd(x_data=x_data_reshaped, noise=noise_reshaped, batch_size=batch_size_processed,
-                                     f_sampling=f_sampling, window_size=window_size, f_rev=f_rev,
-                                     tune_unit_lower_limit=lower_limit, tune_unit_upper_limit=upper_limit,
-                                     side_point_num=side_point_num, snr=snr,
-                                     filter=filter,
-                                     interpolate_method=interpolate_method, interpolate_coef=interpolate_coef,
-                                     exclude_coherent=exclude_coherent)
+            tune_unit, psd = spectral_processing(x_data=x_data_reshaped, **common_spectral_params)
+
+        # Determination of reference tune (Sensor 1)
         index_bool_maxima, index_value_maxima = find_local_maxima(psd)
-        index_bool_minima, index_value_minima = find_local_minima(psd)
         weight_amplitude = normalize_to_01(psd[index_bool_maxima]) - 1
         try:
             q_ref = q_prev_queue.q_ref()
-            assert q_ref > 0
-            # q_ref = fix_anomaly(q_ref_list, q_ref, outliers_len, outliers_threshold_coef)
+            assert (q_ref > lower_limit) and (q_ref < upper_limit)
         except:
             q_ref = np.mean(tune_unit[index_bool_maxima])
+        q_ref_list.append(q_ref)
+
+        # Predict the tune value using adaptive dual sensor Kalman filter
         q_pred = kf.predict_update(q_ref, q_measured)
-        # q_pred = fix_anomaly(q_predicted_list, q_pred, outliers_len, outliers_threshold_coef)
         w1, w2 = kf.detector_weights()
         w1_list.append(w1)
         w2_list.append(w2)
-        q_ref_list.append(q_ref)
         q_predicted_list.append(q_pred)
+
+        # Determination of measured tune (Sensor 2) using weighted linear combination
         distance = normalize_to_01(abs(tune_unit[index_bool_maxima] - (q_ref + q_pred) / 2)) - 1
         weight_distance = 1 - distance
         confidence = alpha * weight_amplitude + (1 - alpha) * weight_distance
         q_measured_index = np.argmax(confidence)
         q_measured = tune_unit[index_bool_maxima][q_measured_index]
-        # q_measured = fix_anomaly(q_measured_list, q_measured, outliers_len, outliers_threshold_coef)
         q_confidence = max(confidence)
         q_prev_queue.append(q_measured, tune_unit, psd)
         q_measured_list.append(q_measured)
+
+        # Peak detection method, commonly used to measure coherent tune
         q_peak_detection = tune_unit[index_bool_maxima][np.argmax(weight_amplitude)]
         peak_detection_list.append(q_peak_detection)
-        closest_minima = find_closest_values(index_value_maxima[q_measured_index], index_value_minima)
-        cf_start = int(max(0, index_value_maxima[q_measured_index] - side_point_num * interpolate_coef // 2))
-        cf_end = int(
-            min(len(tune_unit) - 1, index_value_maxima[q_measured_index] + side_point_num * interpolate_coef // 2))
-        cf_params = gaussian_peak_fit(tune_unit[cf_start:cf_end + 1], psd[cf_start:cf_end + 1])
-        q_curve_fitting = cf_params[1]
-        cf_list.append(q_curve_fitting)
+
+        # # Curve fitting method, commonly used to measure incoherent tune and chromaticity, which is
+        # # not suitable for low SNR and limited frequency resolution scenarios
+        # cf_start = int(max(0, index_value_maxima[q_measured_index] - side_point_num * interpolate_coef // 2))
+        # cf_end = int(
+        #     min(len(tune_unit) - 1, index_value_maxima[q_measured_index] + side_point_num * interpolate_coef // 2))
+        # cf_params = gaussian_peak_fit(tune_unit[cf_start:cf_end + 1], psd[cf_start:cf_end + 1])
+        # q_curve_fitting = cf_params[1]
+        # cf_list.append(q_curve_fitting)
+
+        # try:
+        #     if np.abs(q_pred - q_predicted_list[-2]) >= 0.05:
+        #         print("Anomaly")
+        # except:
+        #     pass
         # plt.figure()
         # plt.plot(tune_unit, normalize_to_01(psd), label="sum")
         # plt.plot(tune_unit, normalize_to_01(q_prev_queue.psd), label="ref")
         # plt.legend()
         # plt.show()
         print(
-            f"qx:{qx: .4f}, q_ref:{q_ref: .4f}, q_predicted:{q_pred: .4f}, q_measured:{q_measured: .4f}, confidence:{q_confidence * 100: .2f}%, peak_detection:{q_peak_detection: .4f}, curve_fitting:{q_curve_fitting: .4f}")
+            f"qx:{qx: .4f}, "
+            f"q_ref:{q_ref: .4f}, "
+            f"q_predicted:{q_pred: .4f}, "
+            f"q_measured:{q_measured: .4f}, "
+            f"confidence:{q_confidence * 100: .2f}%, "
+            f"peak_detection:{q_peak_detection: .4f}, "
+            # f"curve_fitting:{q_curve_fitting: .4f}"
+        )
 
     dic = {'qx': qx_list,
            'q_ref': q_ref_list,
@@ -268,7 +288,7 @@ if __name__ == "__main__":
     filter = "gaussian"
     snr_list = [-20, -15, -10]
     line_shape_list = ["sin", "random", "constant", "linear", "cos"]
-    exclude_coherent_list = [False]
+    exclude_coherent_list = [True, False]
     shutup.please()
     for snr in snr_list:
         for line_shape in line_shape_list:
@@ -276,6 +296,6 @@ if __name__ == "__main__":
                 algorithm_parameters = AlgorithmConfiguration(snr=snr,
                                                               line_shape=line_shape,
                                                               exclude_coherent=exclude_coherent,
-                                                              filter=filter)
+                                                              smoothing_method=filter)
                 tune_measurement_algorithm(synchrotron_parameters, detector_parameters, algorithm_parameters)
                 
