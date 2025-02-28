@@ -53,7 +53,7 @@ def tune_measurement_algorithm(synchrotron_parameters: SynchrotronConfiguration,
         f_rev_range = f_rev_mode * np.ones(351)
     qx_list = generate_q_list(line_shape, len(f_rev_range), qx - 0.09, qx + 0.09)
     qy_list = generate_q_list(line_shape, len(f_rev_range), qy - 0.09, qy + 0.09)
-    plot(qx_list)
+    # plot(qx_list)
     q_ref_original_list = []
     q_measured_original_list = []
     q_ref_filtered_list = []
@@ -68,7 +68,7 @@ def tune_measurement_algorithm(synchrotron_parameters: SynchrotronConfiguration,
     batch_size = int(2 ** np.ceil(np.log2(np.max(f_rev_range) / min_freq_res)))
     # kf = AdaptiveKalmanFilter(initial_state=qx)
     dkf = DualDetectorAdaptiveKalmanFilter(initial_state=qx)
-    rakf_ref = RobustAdaptiveKalmanFilter()
+    rakf_ref = RobustAdaptiveKalmanFilter(threshold=4)
     rakf_measured = RobustAdaptiveKalmanFilter()
     q_measured = 0.3
     for i in range(len(qx_list)):
@@ -90,6 +90,8 @@ def tune_measurement_algorithm(synchrotron_parameters: SynchrotronConfiguration,
                                  dqx=synchrotron_parameters.dqx, dqy=synchrotron_parameters.dqy,
                                  )
         f_rev = f_rev_range[i]
+        synchrotron_parameters.slip_factor = calculate_slip_factor(f_rev)
+        synchrotron_parameters.bets = calculate_bets(synchrotron_parameters.slip_factor)
         print("f_rev:", f_rev)
         f_sampling = 2 * schottky_harmonic * f_rev
         freq_res = f_sampling / batch_size
@@ -114,7 +116,8 @@ def tune_measurement_algorithm(synchrotron_parameters: SynchrotronConfiguration,
         energy0 = gamma * xt.PROTON_MASS_EV
         line.particle_ref = xt.Particles(mass0=xt.PROTON_MASS_EV, q0=1, _context=context, energy0=energy0)
         bunch = xp.generate_matched_gaussian_bunch(num_particles=int(1e3),
-                                                   nemitt_x=nemitt, nemitt_y=nemitt,
+                                                   nemitt_x=SynchrotronConfiguration.nemitt,
+                                                   nemitt_y=SynchrotronConfiguration.nemitt,
                                                    line=line,
                                                    total_intensity_particles=synchrotron_parameters.intensity,
                                                    sigma_z=synchrotron_parameters.length / 8
@@ -301,15 +304,17 @@ def tune_measurement_algorithm(synchrotron_parameters: SynchrotronConfiguration,
         )
 
     dic = {'qx': qx_list,
-           'q_ref': q_ref_original_list,
+           'q_ref_original': q_ref_original_list,
+           'q_ref_filtered': q_ref_filtered_list,
            'q_predicted': q_predicted_list,
-           'q_measured': q_measured_original_list,
+           'q_measured_original': q_measured_original_list,
+           'q_measured_filtered': q_measured_filtered_list,
            'peak_detection': peak_detection_list,
            'curve_fitting': cf_list,
            'failed_to_detect': failed_to_detect,
            'weight_ref': w1_list,
            'weight_measured': w2_list}
-    plot_measured_results(dic=dic)
+    plot_measured_results(dic=dic, title=f"{line_shape}_{snr}_{f_rev_mode}_{'without' if exclude_coherent else 'with'}_coherent")
     with open(f"{smoothing_method}_{line_shape}_{snr}_frev_{f_rev_mode}_{'without' if exclude_coherent else 'with'}_coherent.pkl", "wb") as f:
         pickle.dump(dic, f, protocol=pickle.HIGHEST_PROTOCOL)
     plt.figure()

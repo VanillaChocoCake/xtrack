@@ -337,7 +337,8 @@ def covered_frequency_bands_minmax(central_frequency: float,
     return frequency_bands, tune_min_covered & tune_max_covered
 
 def plot_measured_results(dic: dict=None,
-                          filename: str=None) -> None:
+                          filename: str=None,
+                          title: str="Comparison") -> None:
     """
     Plot the measured results for comparison, including nominal values, reference, predicted, and measured data.
 
@@ -348,7 +349,8 @@ def plot_measured_results(dic: dict=None,
         the data from a file.
     filename : str, optional
         The filename of a pickle file containing the results dictionary. Required if `dic` is not provided.
-
+    title : str, optional
+        The title of the plot, defaults to "Comparison" if not provided.
     Raises:
     -------
     ValueError
@@ -369,9 +371,9 @@ def plot_measured_results(dic: dict=None,
             dic = pickle.load(f)
     qx = np.array(dic['qx'])
     failed_to_detect = np.array(dic['failed_to_detect'])
-    q_ref = np.array(dic['q_ref'])
+    q_ref_filtered = np.array(dic['q_ref_filtered'])
     q_predicted = np.array(dic['q_predicted'])
-    q_measured = np.array(dic['q_measured'])
+    q_measured_filtered = np.array(dic['q_measured_filtered'])
     # peak_detection = np.array(dic['peak_detection'])
     # cf = np.array(dic['curve_fitting'])
     # weight_ref = np.array(dic['weight_ref'])
@@ -381,14 +383,14 @@ def plot_measured_results(dic: dict=None,
     plt.plot(qx + 0.01, label='nominal + 0.01')
     plt.plot(qx - 0.01, label='nominal - 0.01')
     plt.plot(failed_to_detect, label='not covered area')
-    plt.plot(q_ref, 'o', label='reference', markersize=1)
+    plt.plot(q_ref_filtered, 'o', label='reference (filtered)', markersize=1)
     plt.plot(q_predicted, 'v', label='predicted', markersize=1)
-    plt.plot(q_measured, 's', label='measured', markersize=1)
+    plt.plot(q_measured_filtered, 's', label='measured (filtered)', markersize=1)
     # plt.plot(peak_detection, '*', label='peak detection', markersize=1)
     # plt.plot(cf, 'p', label='curve fitting', markersize=1)
     # plt.plot(weight_ref, label='weight_ref')
     # plt.plot(weight_measured, label='weight_measured')
-    plt.title("Comparison")
+    plt.title(title)
     plt.legend()
     plt.show()
 

@@ -1,154 +1,111 @@
+from dataclasses import dataclass, field
 import numpy as np
 
-length = 24.6
-qx = 0.68
-qy = 0.4
-betx = 6
-bety = 1.1
-alfx = 1.359
-alfy = -0.416
-dx = 0.5285
-dpx = -0.26
-dy = 0
-dpy = 0
-x_ref = 0
-px_ref = 0
-y_ref = 0
-py_ref = 0
-longitudinal_mode = "linear_fixed_qs"
-qs = 0.001
-slip_factor = 0.33
-bets = slip_factor * length / (2 * np.pi * qs)
-momentum_compaction_factor = 0.3175
-slippage_length = None
-voltage_rf = 1.5e3
-frequency_rf = 7.48e6
-lag_rf = 180
-dqx = -1.46
-dqy = -1.34
-nemitt = 2*np.pi*1e-6
-intensity = int(1e11)
+# 全局常量定义
+LENGTH: float = 24.6
+QX: float = 0.68
+QY: float = 0.4
+BETX: float = 6
+BETY: float = 1.1
+ALFX: float = 1.359
+ALFY: float = -0.416
+DX: float = 0.5285
+DPX: float = -0.26
+DY: float = 0
+DPY: float = 0
+LONGITUDINAL_MODE: str = "linear_fixed_qs"
+QS: float = 0.001
+MOMENTUM_COMPACTION_FACTOR: float = 0.3175
+VOLTAGE_RF: float = 1.5e3
+DQX: float = -1.46
+DQY: float = -1.34
+NEMITT: float = 2 * np.pi * 1e-6
+INTENSITY: int = int(1e11)
+
+import scipy.constants as const
+def calculate_slip_factor(f_rev: float,
+                          length: float = LENGTH,
+                          momentum_compaction_factor: float = MOMENTUM_COMPACTION_FACTOR) -> float:
+    velocity = length*f_rev
+    beta = velocity/const.c
+    gamma = 1/np.sqrt(1-beta**2)
+    slip_factor = 1/gamma**2 - momentum_compaction_factor
+    return slip_factor
 
 
+def calculate_bets(slip_factor: float, length: float = LENGTH, qs: float = QS) -> float:
+    return slip_factor * length / (2 * np.pi * qs)
+
+BANDWIDTH: float = 3e6
+FC: float = 38.5e6
+
+SIDE_BAND_WIDTH: float = 500e3
+F_REV_INCREASE_RATE: float = 10e6
+MIN_TRACK_TURNS: int = 10
+SNR: float = -20
+MIN_FREQ_RES: float = 10e3
+SIMULATION_TIME: float = 0.001
+MAX_LEN: int = 10
+DECAY_FACTOR: float = 0.8
+LINE_SHAPE: str = "cos"
+F_REV_MODE: float = 7.5e6
+ALPHA: float = 0.45
+EXCLUDE_COHERENT: bool = False
+SCHOTTSKY_HARMONIC: float = 0.5
+INTERPOLATE_METHOD: str = "cubic"
+INTERPOLATE_COEF: int = 2
+SMOOTHING_METHOD: str = "gaussian"
+
+@dataclass
 class SynchrotronConfiguration:
-    def __init__(self,
-                 length=length,
-                 qx=qx,
-                 qy=qy,
-                 betx=betx,
-                 bety=bety,
-                 alfx=alfx,
-                 alfy=alfy,
-                 dx=dx,
-                 dpx=dpx,
-                 dy=dy,
-                 dpy=dpy,
-                 x_ref=x_ref,
-                 y_ref=y_ref,
-                 px_ref=px_ref,
-                 py_ref=py_ref,
-                 longitudinal_mode=longitudinal_mode,
-                 qs=qs,
-                 bets=bets,
-                 slip_factor=slip_factor,
-                 momentum_compaction_factor=momentum_compaction_factor,
-                 slippage_length=slippage_length,
-                 voltage_rf=voltage_rf,
-                 frequency_rf=frequency_rf,
-                 lag_rf=lag_rf,
-                 dqx=dqx,
-                 dqy=dqy,
-                 nemitt=nemitt,
-                 intensity=intensity):
-        self.length = length
-        self.qx = qx
-        self.qy = qy
-        self.betx = betx
-        self.bety = bety
-        self.alfx = alfx
-        self.alfy = alfy
-        self.dx = dx
-        self.dpx = dpx
-        self.dy = dy
-        self.dpy = dpy
-        self.x_ref = x_ref
-        self.y_ref = y_ref
-        self.px_ref = px_ref
-        self.py_ref = py_ref
-        self.longitudinal_mode = longitudinal_mode
-        self.qs = qs
-        self.bets = bets
-        self.slip_factor = slip_factor
-        self.momentum_compaction_factor = momentum_compaction_factor
-        self.slippage_length = slippage_length
-        self.voltage_rf = voltage_rf
-        self.frequency_rf = frequency_rf
-        self.lag_rf = lag_rf
-        self.dqx = dqx
-        self.dqy = dqy
-        self.nemitt = nemitt
-        self.intensity = intensity
+    length: float = LENGTH
+    qx: float = QX
+    qy: float = QY
+    betx: float = BETX
+    bety: float = BETY
+    alfx: float = ALFX
+    alfy: float = ALFY
+    dx: float = DX
+    dpx: float = DPX
+    dy: float = DY
+    dpy: float = DPY
+    longitudinal_mode: str = LONGITUDINAL_MODE
+    qs: float = QS
+    bets: float = None
+    slip_factor: float = None
+    momentum_compaction_factor: float = MOMENTUM_COMPACTION_FACTOR
+    voltage_rf: float = VOLTAGE_RF
+    dqx: float = DQX
+    dqy: float = DQY
+    nemitt: float = NEMITT
+    intensity: int = INTENSITY
 
-
-bandwidth = 3e6  # Hz
-fc = 38.5e6  # Hz
-
-
+@dataclass
 class DetectorConfiguration:
-    def __init__(self, bandwidth=bandwidth, fc=fc):
-        self.bandwidth = bandwidth
-        self.fc = fc
+    bandwidth: float = BANDWIDTH
+    fc: float = FC
+    fl: float = field(init=False)
+    fh: float = field(init=False)
+
+    def __post_init__(self):
         self.fl = self.fc - self.bandwidth / 2
         self.fh = self.fc + self.bandwidth / 2
 
-sideband_width = 500e3
-f_rev_increase_rate = 10e6
-min_track_turns = 10
-snr = -20
-min_freq_res = 10e3
-simulation_time = 0.001
-max_len = 10
-decay_factor = 0.8
-line_shape = "cos"
-f_rev_mode = 7.5e6
-alpha = 0.45
-exclude_coherent = False
-schottky_harmonic = 0.5
-interpolate_method = "cubic"
-interpolate_coef = 2
-smoothing_method = "gaussian"
-
+@dataclass
 class AlgorithmConfiguration:
-    def __init__(self,
-                 sideband_width=sideband_width,
-                 f_rev_increase_rate=f_rev_increase_rate,
-                 min_track_turns=min_track_turns,
-                 snr=snr,
-                 min_freq_res=min_freq_res,
-                 simulation_time=simulation_time,
-                 max_len=max_len,
-                 decay_factor=decay_factor,
-                 line_shape=line_shape,
-                 f_rev_mode=f_rev_mode,
-                 alpha=alpha,
-                 exclude_coherent=exclude_coherent,
-                 schottky_harmonic=schottky_harmonic,
-                 interpolate_method=interpolate_method,
-                 interpolate_coef=interpolate_coef,
-                 smoothing_method=smoothing_method):
-        self.sideband_width = sideband_width
-        self.f_rev_increase_rate = f_rev_increase_rate
-        self.min_track_turns = min_track_turns
-        self.snr = snr
-        self.min_freq_res = min_freq_res
-        self.simulation_time = simulation_time
-        self.max_len = max_len
-        self.decay_factor = decay_factor
-        self.line_shape = line_shape
-        self.f_rev_mode = f_rev_mode
-        self.alpha = alpha
-        self.exclude_coherent = exclude_coherent
-        self.schottky_harmonic = schottky_harmonic
-        self.interpolate_method = interpolate_method
-        self.interpolate_coef = interpolate_coef
-        self.smoothing_method = smoothing_method
+    sideband_width: float = SIDE_BAND_WIDTH
+    f_rev_increase_rate: float = F_REV_INCREASE_RATE
+    min_track_turns: int = MIN_TRACK_TURNS
+    snr: float = SNR
+    min_freq_res: float = MIN_FREQ_RES
+    simulation_time: float = SIMULATION_TIME
+    max_len: int = MAX_LEN
+    decay_factor: float = DECAY_FACTOR
+    line_shape: str = LINE_SHAPE
+    f_rev_mode: float = F_REV_MODE
+    alpha: float = ALPHA
+    exclude_coherent: bool = EXCLUDE_COHERENT
+    schottky_harmonic: float = SCHOTTSKY_HARMONIC
+    interpolate_method: str = INTERPOLATE_METHOD
+    interpolate_coef: int = INTERPOLATE_COEF
+    smoothing_method: str = SMOOTHING_METHOD
