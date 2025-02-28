@@ -78,6 +78,9 @@ def tune_measurement_algorithm(synchrotron_parameters: SynchrotronConfiguration,
         qx = qx_list[i]
         qx = float(qx)
         qy = float(qy)
+        f_rev = f_rev_range[i]
+        synchrotron_parameters.slip_factor = calculate_slip_factor(f_rev)
+        synchrotron_parameters.bets = calculate_bets(synchrotron_parameters.slip_factor)
         lmap = xt.LineSegmentMap(length=synchrotron_parameters.length,
                                  qx=qx, qy=qy,
                                  betx=synchrotron_parameters.betx, bety=synchrotron_parameters.bety,
@@ -89,9 +92,6 @@ def tune_measurement_algorithm(synchrotron_parameters: SynchrotronConfiguration,
                                  bets=synchrotron_parameters.bets,
                                  dqx=synchrotron_parameters.dqx, dqy=synchrotron_parameters.dqy,
                                  )
-        f_rev = f_rev_range[i]
-        synchrotron_parameters.slip_factor = calculate_slip_factor(f_rev)
-        synchrotron_parameters.bets = calculate_bets(synchrotron_parameters.slip_factor)
         print("f_rev:", f_rev)
         f_sampling = 2 * schottky_harmonic * f_rev
         freq_res = f_sampling / batch_size
