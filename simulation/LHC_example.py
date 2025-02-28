@@ -3,7 +3,7 @@ import xpart as xp
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy.fft import fft, fftshift
-from myfunc import *
+from Aegithalos_caudatus import *
 
 lmap = xt.LineSegmentMap(length=26658.8831999989, qx=0.27, qy=0.295, dqx=15, dqy=15, longitudinal_mode='nonlinear',
     voltage_rf=4e6, frequency_rf=400e6, lag_rf=180, momentum_compaction_factor=3.225e-04, betx=1, bety=1)
@@ -59,8 +59,8 @@ for i in range(x_data_noisy.shape[0]):
 
     # psd_i = sgolay_filter(psd_i, window_size, min(4, window_size - 1))
     psd_s += psd_i
-    psd_p *= (normalize_to_01(psd_i) + 1)
-    psd_p = normalize_to_01(psd_p) + 1
+    psd_p *= (normalize_to_0_1(psd_i) + 1)
+    psd_p = normalize_to_0_1(psd_p) + 1
 psd_s -= min(psd_s)
 coef = max(psd_s)/max(psd_p)
 psd_p *= coef

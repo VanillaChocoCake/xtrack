@@ -5,7 +5,7 @@ import xtrack as xt
 import xpart as xp
 import xobjects as xo
 from parameters import *
-from myfunc import *
+from Aegithalos_caudatus import *
 import shutup
 import pickle
 import scipy.constants as sc
@@ -32,7 +32,7 @@ def tune_measurement_algorithm(synchrotron_parameters: SynchrotronConfiguration,
     interpolate_coef = algorithm_parameters.interpolate_coef
     smoothing_method = algorithm_parameters.smoothing_method
 
-    q_prev_queue = q_queue(max_len=max_len, decay_factor=decay_factor)
+    ema_psd = EMA_PSD(max_len=max_len, decay_factor=decay_factor)
     if synchrotron_parameters.qx > 0.5:
         qx = 1 - synchrotron_parameters.qx
     else:
@@ -54,8 +54,10 @@ def tune_measurement_algorithm(synchrotron_parameters: SynchrotronConfiguration,
     qx_list = generate_q_list(line_shape, len(f_rev_range), qx - 0.09, qx + 0.09)
     qy_list = generate_q_list(line_shape, len(f_rev_range), qy - 0.09, qy + 0.09)
     plot(qx_list)
-    q_ref_list = []
-    q_measured_list = []
+    q_ref_original_list = []
+    q_measured_original_list = []
+    q_ref_filtered_list = []
+    q_measured_filtered_list = []
     q_predicted_list = []
     peak_detection_list = []
     cf_list = []
@@ -65,7 +67,9 @@ def tune_measurement_algorithm(synchrotron_parameters: SynchrotronConfiguration,
     # batch_size = int(2 ** np.ceil(np.log2(2 * schottky_harmonic * np.max(f_rev_range) / min_freq_res)))
     batch_size = int(2 ** np.ceil(np.log2(np.max(f_rev_range) / min_freq_res)))
     # kf = AdaptiveKalmanFilter(initial_state=qx)
-    kf = DualDetectorAdaptiveKalmanFilter(initial_state=qx)
+    dkf = DualDetectorAdaptiveKalmanFilter(initial_state=qx)
+    rakf_ref = RobustAdaptiveKalmanFilter()
+    rakf_measured = RobustAdaptiveKalmanFilter()
     q_measured = 0.3
     for i in range(len(qx_list)):
         print(i)
@@ -179,7 +183,32 @@ def tune_measurement_algorithm(synchrotron_parameters: SynchrotronConfiguration,
         x_data = np.nan_to_num(x_data, nan=0)
         t = np.linspace(0, len(x_data)/f_sampling, len(x_data))
         if exclude_coherent:
+
+            # f, psd_ori = cal_psd(x_data, f_sampling)
+
             x_data = exclude_coherent_signal(t, x_data, f_sampling, np.array([0.21, 0.49])*f_rev)
+
+            # _, psd_excluded = cal_psd(x_data, f_sampling)
+            # f /= f_rev
+            # mask = (f > 0.22) & (f < 0.42)
+            # f = f[mask]
+            # psd_ori = psd_ori[mask]
+            # psd_excluded = psd_excluded[mask]
+            # data_to_save = np.column_stack((
+            #     f, psd_ori, psd_excluded
+            # ))
+            # header = (
+            #     "# Tune_unit    original_psd    without_coherent_signal_psd"
+            # )
+            # np.savetxt(
+            #     f"rmsfit_transverse_coherent_excluded.txt",
+            #     data_to_save,
+            #     fmt='%.6e',  # 控制精度为6位小数
+            #     delimiter='    ',  # 使用4空格分隔列
+            #     header=header,
+            #     comments=''  # 移除自动添加的注释符
+            # )
+
         x_data, noise = generate_noisy_signal(x_data, snr)
         x_data_reshaped = windowed_reshape(x_data, batch_size)
         noise_reshaped = windowed_reshape(noise, batch_size)
@@ -206,30 +235,37 @@ def tune_measurement_algorithm(synchrotron_parameters: SynchrotronConfiguration,
 
         # Determination of reference tune (Sensor 1)
         index_bool_maxima, index_value_maxima = find_local_maxima(psd)
-        weight_amplitude = normalize_to_01(psd[index_bool_maxima]) - 1
+        weight_amplitude = normalize_to_0_1(psd[index_bool_maxima])
         try:
-            q_ref = q_prev_queue.q_ref()
+            q_ref = ema_psd.q_ref()
             assert (q_ref > lower_limit) and (q_ref < upper_limit)
         except:
             q_ref = np.mean(tune_unit[index_bool_maxima])
-        q_ref_list.append(q_ref)
+        q_ref_original_list.append(q_ref)
+        q_ref = rakf_ref.predict_update(q_ref)
+        q_ref_filtered_list.append(q_ref)
 
         # Predict the tune value using adaptive dual sensor Kalman filter
-        q_pred = kf.predict_update(q_ref, q_measured)
-        w1, w2 = kf.detector_weights()
+        q_pred = dkf.predict_update(q_ref, q_measured)
+        w1, w2 = dkf.detector_weights()
         w1_list.append(w1)
         w2_list.append(w2)
         q_predicted_list.append(q_pred)
 
         # Determination of measured tune (Sensor 2) using weighted linear combination
-        distance = normalize_to_01(abs(tune_unit[index_bool_maxima] - (q_ref + q_pred) / 2)) - 1
+        distance = normalize_to_0_1(abs(tune_unit[index_bool_maxima] - (q_ref + q_pred) / 2))
         weight_distance = 1 - distance
         confidence = alpha * weight_amplitude + (1 - alpha) * weight_distance
         q_measured_index = np.argmax(confidence)
         q_measured = tune_unit[index_bool_maxima][q_measured_index]
         q_confidence = max(confidence)
-        q_prev_queue.append(q_measured, tune_unit, psd)
-        q_measured_list.append(q_measured)
+        q_measured_original_list.append(q_measured)
+        q_measured = rakf_measured.predict_update(q_measured)
+        q_measured_filtered_list.append(q_measured)
+
+        # Update previous PSD
+        ema_psd.append(tune_unit, psd)
+
 
         # Peak detection method, commonly used to measure coherent tune
         q_peak_detection = tune_unit[index_bool_maxima][np.argmax(weight_amplitude)]
@@ -250,8 +286,8 @@ def tune_measurement_algorithm(synchrotron_parameters: SynchrotronConfiguration,
         # except:
         #     pass
         # plt.figure()
-        # plt.plot(tune_unit, normalize_to_01(psd), label="sum")
-        # plt.plot(tune_unit, normalize_to_01(q_prev_queue.psd), label="ref")
+        # plt.plot(tune_unit, normalize_to_0_1(psd), label="sum")
+        # plt.plot(tune_unit, normalize_to_0_1(q_prev_queue.psd), label="ref")
         # plt.legend()
         # plt.show()
         print(
@@ -265,16 +301,16 @@ def tune_measurement_algorithm(synchrotron_parameters: SynchrotronConfiguration,
         )
 
     dic = {'qx': qx_list,
-           'q_ref': q_ref_list,
+           'q_ref': q_ref_original_list,
            'q_predicted': q_predicted_list,
-           'q_measured': q_measured_list,
+           'q_measured': q_measured_original_list,
            'peak_detection': peak_detection_list,
            'curve_fitting': cf_list,
            'failed_to_detect': failed_to_detect,
            'weight_ref': w1_list,
            'weight_measured': w2_list}
     plot_measured_results(dic=dic)
-    with open(f"{line_shape}_{snr}_frev_{f_rev_mode}_{'without' if exclude_coherent else 'with'}_coherent.pkl", "wb") as f:
+    with open(f"{smoothing_method}_{line_shape}_{snr}_frev_{f_rev_mode}_{'without' if exclude_coherent else 'with'}_coherent.pkl", "wb") as f:
         pickle.dump(dic, f, protocol=pickle.HIGHEST_PROTOCOL)
     plt.figure()
     plt.plot(w1_list, label="w1")
@@ -288,7 +324,7 @@ if __name__ == "__main__":
     filter = "gaussian"
     snr_list = [-20, -15, -10]
     line_shape_list = ["sin", "random", "constant", "linear", "cos"]
-    exclude_coherent_list = [True, False]
+    exclude_coherent_list = [False, True]
     shutup.please()
     for snr in snr_list:
         for line_shape in line_shape_list:

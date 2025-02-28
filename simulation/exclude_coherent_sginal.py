@@ -1,7 +1,7 @@
 import matplotlib.pyplot as plt
 import numpy as np
 
-from myfunc import *
+from Aegithalos_caudatus import *
 
 f_sampling = 29.75e6
 
