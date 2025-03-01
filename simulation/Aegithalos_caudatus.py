@@ -742,8 +742,9 @@ def spectral_processing(x_data: np.ndarray,
         # Fold → Smoothing → Sum
         final_psd = psd_matrix[:, freq_mask].sum(axis=0)
 
-    # Normalize by the minimum value to scale PSD
-    final_psd /= np.min(final_psd)
+    # Make PSD bigger than 0
+    final_psd -= np.min(final_psd)
+    final_psd *= 1e5
 
     # Apply interpolation to refine the final PSD
     final_psd = interpolation(final_psd, interpolate_method, interpolate_coef)
@@ -1099,116 +1100,6 @@ class EMA_PSD:
         """
         return self.tune_unit[np.argmax(self.psd)]  # Return the tune unit with the maximum PSD
 
-class RobustAdaptiveKalmanFilter:
-    def __init__(self,
-                 initial_state=0.3,
-                 initial_velocity=0.01,
-                 window_size=20,
-                 Q_scale=0.1, R_scale=1,
-                 threshold=3):
-        """
-        Initializes the Robust Adaptive Kalman Filter with the given parameters.
-        :param initial_state: The initial state of the system (position).
-        :param initial_velocity: The initial velocity of the system.
-        :param window_size: The size of the residual history window used for threshold adjustment.
-        :param Q_scale: Scaling factor for the process noise covariance matrix.
-        :param R_scale: Scaling factor for the measurement noise covariance.
-        :param threshold: The initial threshold for anomaly detection based on residuals.
-        """
-        # State variables [position, velocity] (ensure this is a 1D array)
-        self.x = np.array([initial_state, initial_velocity], dtype=float)
-
-        # State covariance matrix (initial uncertainty)
-        self.P = np.eye(2) * 1
-
-        # Process noise covariance matrix (reflecting the uncertainty in the process model)
-        self.Q = np.eye(2) * Q_scale
-
-        # Initial measurement noise covariance (reflecting the uncertainty in the sensor)
-        self.R = R_scale
-
-        # State transition matrix (linear model of the system's state evolution)
-        self.F = np.array([[1, 1], [0, 1]])
-
-        # Observation matrix (mapping the state to the measured value, modified to be a 1D array)
-        self.H = np.array([1, 0])  # Key modification: changed from [[1, 0]] to [1, 0]
-
-        # Threshold for detecting anomalies in the residual (innovation)
-        self.threshold = threshold
-
-        # History of residuals for dynamic threshold adjustment
-        self.residuals = []
-        self.window_size = window_size
-
-    def update_residual_threshold(self, residual):
-        """
-        Updates the dynamic threshold based on the historical residuals.
-        :param residual: The current residual (innovation) from the measurement update.
-        """
-        # Append the current residual to the history
-        self.residuals.append(residual)
-
-        # If the history exceeds the window size, remove the oldest residual
-        if len(self.residuals) > self.window_size:
-            self.residuals.pop(0)
-
-        # If there is more than one residual, calculate the dynamic threshold
-        if len(self.residuals) > 1:
-            residuals_array = np.array(self.residuals).flatten()  # Key modification: flatten the residuals
-            mean = np.mean(residuals_array)
-            std = np.std(residuals_array)
-            # Update dynamic threshold based on mean and standard deviation of residuals
-            self.dynamic_threshold = mean + self.threshold * std
-        else:
-            # Use the static threshold for the first few residuals
-            self.dynamic_threshold = self.threshold
-
-    def predict_update(self, z):
-        """
-        Predicts the next state and updates the filter with the new measurement.
-        :param z: The new measurement (sensor reading).
-        :return: The estimated position after the prediction and update steps.
-        """
-        # ----------- Prediction Step -----------
-        # Predict the next state based on the previous state and state transition model
-        x_pred = self.F @ self.x
-
-        # Predict the next state covariance matrix, considering process noise
-        P_pred = self.F @ self.P @ self.F.T + self.Q
-
-        # ----------- Anomaly Detection -----------
-        # Calculate the innovation (residual) between the predicted and actual measurement
-        y = z - np.dot(self.H, x_pred)  # Ensure the result is a scalar using np.dot
-
-        # Update the dynamic residual threshold based on the current residual
-        self.update_residual_threshold(abs(y))
-
-        # Check if the innovation is greater than the dynamic threshold (salt-and-pepper noise)
-        if abs(y) > self.dynamic_threshold:
-            # If the residual is too large, skip updating with the outlier value
-            self.x = x_pred
-            self.P = P_pred
-            estimated = x_pred[0]
-        else:
-            # ----------- Normal Update -----------
-            # Compute the innovation covariance (S) considering measurement noise
-            S = np.dot(self.H, np.dot(P_pred, self.H)) + self.R  # Scalar computation
-
-            # Calculate the Kalman gain (weight for the innovation)
-            K = np.dot(P_pred, self.H) / S  # Kalman gain as a 1D array
-
-            # Update the state estimate using the Kalman gain and the innovation
-            self.x = x_pred + K * y
-
-            # Update the state covariance matrix
-            self.P = P_pred - np.outer(K, np.dot(self.H, P_pred))
-
-            # The estimated position is the first element of the state vector
-            estimated = self.x[0]
-
-        return estimated
-
-
 class DualDetectorAdaptiveKalmanFilter:
     def __init__(
             self,
@@ -1218,7 +1109,7 @@ class DualDetectorAdaptiveKalmanFilter:
             measurement_noise=2.6 ** 2,  # Initial measurement noise for both detectors
             max_len=8,
             alpha=0.4,
-            min_weight=0.1
+            min_weight=0
     ):
         """
         Initializes the Dual Detector Adaptive Kalman Filter with the given parameters.
@@ -1358,76 +1249,46 @@ class DualDetectorAdaptiveKalmanFilter:
         total = self.w1 + self.w2
         return self.w1 / total, self.w2 / total  # Normalize weights to ensure they sum to 1
 
+class MADFilter:
+    def __init__(self, window_size=10, threshold=2):
+        """
+        Traditional MAD-based outlier detector with sliding window
+        :param window_size: Size of the data window for MAD calculation
+        :param threshold: Threshold multiplier for MAD-based detection
+        """
+        self.window_size = window_size
+        self.threshold = threshold
+        self.data_window = []
+        self.filtered_values = []
 
-class legacy_functions:
-    def __init__(self):
-        pass
+    def _mad(self, data):
+        """Helper function to compute MAD"""
+        median = np.median(data)
+        abs_dev = np.abs(data - median)
+        return np.median(abs_dev) * 1.4826  # Scaled MAD
 
-    class AdaptiveKalmanFilter:
-        def __init__(self, initial_state=0.5, initial_estimate_error=1, process_noise=0.06, measurement_noise=2.6 ** 2):
-            """
-            Initializes the Adaptive Kalman Filter with the given parameters.
-            :param initial_state: Initial state estimate (e.g., position).
-            :param initial_estimate_error: Initial estimate of the error in the state.
-            :param process_noise: Process noise covariance (uncertainty in the system dynamics).
-            :param measurement_noise: Measurement noise covariance (uncertainty in the measurement).
-            """
-            # Initial state estimate (position or any other state quantity)
-            self.x = initial_state
+    def process(self, new_value):
+        """
+        Process new data point with traditional MAD method
+        :param new_value: New measurement value
+        :return: Filtered value (outliers replaced with window median)
+        """
+        # Maintain sliding window
+        self.data_window.append(new_value)
+        if len(self.data_window) > self.window_size:
+            self.data_window.pop(0)
 
-            # Initial estimate error (state uncertainty)
-            self.P = initial_estimate_error
+        # Calculate statistics
+        if len(self.data_window) >= self.window_size//2:  # Minimum samples for meaningful MAD
+            current_median = np.median(self.data_window)
+            mad = self._mad(np.array(self.data_window))
+            upper_bound = current_median + self.threshold * mad
+            lower_bound = current_median - self.threshold * mad
 
-            # Process noise covariance (modeling uncertainty in the process)
-            self.Q = process_noise
+            # Replace outliers with median
+            filtered = new_value if (lower_bound <= new_value <= upper_bound) else current_median
+        else:
+            filtered = new_value  # Pass through initially
 
-            # Measurement noise covariance (uncertainty in the measurement)
-            self.R = measurement_noise
-
-            # History of residuals (differences between measurements and predicted state)
-            self.window = []
-
-        def predict_update(self, z, alpha=0.1):
-            """
-            Performs the prediction and update steps of the Kalman filter with adaptive parameters.
-            :param z: The current measurement (observed value).
-            :param alpha: A factor used to adaptively adjust the process and measurement noise based on residuals.
-            :return: The updated state estimate after the prediction and update steps.
-            """
-            # ----------- Prediction Step -----------
-            # Predict the next state based on the current state estimate (no motion model assumed here)
-            x_pred = self.x
-
-            # Predict the error covariance, accounting for the process noise
-            P_pred = self.P + self.Q
-
-            # ----------- Update Step -----------
-            # Calculate the Kalman gain, which determines the weight given to the new measurement
-            K = P_pred / (P_pred + self.R)
-
-            # Calculate the residual (difference between the observed measurement and predicted state)
-            residual = z - x_pred
-
-            # Update the state estimate using the Kalman gain and the residual
-            self.x = x_pred + K * residual
-
-            # Update the error covariance (uncertainty in the state estimate)
-            self.P = (1 - K) * P_pred
-
-            # ----------- Adaptive Adjustments -----------
-            # Store the residual for later analysis
-            self.window.append(residual)
-
-            # If the residual history exceeds a window size of 3, remove the oldest value
-            if len(self.window) > 3:  # Size of the sliding window for residuals
-                self.window.pop(0)
-
-            # If enough residuals are available, adapt the measurement noise covariance (R)
-            if len(self.window) >= 2:
-                self.R = alpha * np.var(self.window) + (1 - alpha) * self.R  # Update R based on variance of residuals
-
-            # Adapt the process noise covariance (Q) based on the absolute value of the residual
-            self.Q = alpha * abs(residual) + (1 - alpha) * self.Q  # Update Q based on residual magnitude
-
-            # Return the updated state estimate
-            return self.x
+        self.filtered_values.append(filtered)
+        return filtered

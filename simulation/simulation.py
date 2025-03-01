@@ -4,11 +4,13 @@ import numpy as np
 import xtrack as xt
 import xpart as xp
 import xobjects as xo
-from parameters import *
+from parameters import SynchrotronConfiguration, DetectorConfiguration, AlgorithmConfiguration, calculate_slip_factor, calculate_bets
 from Aegithalos_caudatus import *
 import shutup
 import pickle
 import scipy.constants as sc
+
+from simulation.readNplot import mad_result
 
 
 def tune_measurement_algorithm(synchrotron_parameters: SynchrotronConfiguration,
@@ -68,8 +70,8 @@ def tune_measurement_algorithm(synchrotron_parameters: SynchrotronConfiguration,
     batch_size = int(2 ** np.ceil(np.log2(np.max(f_rev_range) / min_freq_res)))
     # kf = AdaptiveKalmanFilter(initial_state=qx)
     dkf = DualDetectorAdaptiveKalmanFilter(initial_state=qx)
-    rakf_ref = RobustAdaptiveKalmanFilter(threshold=4)
-    rakf_measured = RobustAdaptiveKalmanFilter()
+    madf_ref = MADFilter()
+    madf_measured = MADFilter()
     q_measured = 0.3
     for i in range(len(qx_list)):
         print(i)
@@ -245,7 +247,7 @@ def tune_measurement_algorithm(synchrotron_parameters: SynchrotronConfiguration,
         except:
             q_ref = np.mean(tune_unit[index_bool_maxima])
         q_ref_original_list.append(q_ref)
-        q_ref = rakf_ref.predict_update(q_ref)
+        q_ref = madf_ref.process(q_ref)
         q_ref_filtered_list.append(q_ref)
 
         # Predict the tune value using adaptive dual sensor Kalman filter
@@ -263,7 +265,7 @@ def tune_measurement_algorithm(synchrotron_parameters: SynchrotronConfiguration,
         q_measured = tune_unit[index_bool_maxima][q_measured_index]
         q_confidence = max(confidence)
         q_measured_original_list.append(q_measured)
-        q_measured = rakf_measured.predict_update(q_measured)
+        q_measured = madf_measured.process(q_measured)
         q_measured_filtered_list.append(q_measured)
 
         # Update previous PSD
@@ -314,8 +316,9 @@ def tune_measurement_algorithm(synchrotron_parameters: SynchrotronConfiguration,
            'failed_to_detect': failed_to_detect,
            'weight_ref': w1_list,
            'weight_measured': w2_list}
-    plot_measured_results(dic=dic, title=f"{detector_parameters.bandwidth/1e6: int}_{line_shape}_{snr}_{f_rev_mode}_{'without' if exclude_coherent else 'with'}_coherent")
-    with open(f"{detector_parameters.bandwidth/1e6: int}_{smoothing_method}_{line_shape}_{snr}_frev_{f_rev_mode}_{'without' if exclude_coherent else 'with'}_coherent.pkl", "wb") as f:
+    plot_measured_results(dic=dic,
+                          title=f"{int(detector_parameters.bandwidth/1e6)}MHz_{smoothing_method}_{line_shape}_{snr}_frev_{f_rev_mode}_{'without' if exclude_coherent else 'with'}_coherent.pkl")
+    with open(f"{int(detector_parameters.bandwidth/1e6)}MHz_{smoothing_method}_{line_shape}_{snr}_frev_{f_rev_mode}_{'without' if exclude_coherent else 'with'}_coherent.pkl", "wb") as f:
         pickle.dump(dic, f, protocol=pickle.HIGHEST_PROTOCOL)
     plt.figure()
     plt.plot(w1_list, label="w1")
@@ -325,22 +328,23 @@ def tune_measurement_algorithm(synchrotron_parameters: SynchrotronConfiguration,
 
 if __name__ == "__main__":
     synchrotron_parameters = SynchrotronConfiguration()
-    detector_parameters = DetectorConfiguration()
-    bandwidth_list = [3e6, 10e6]
+    detector_parameters = DetectorConfiguration(bandwidth=10e6)
     smoothing_method_list = ["gaussian", "sgolay"]
+    # smoothing_method_list = ["gaussian"]
     snr_list = [-20, -15, -10]
+    # snr_list = [-20]
     line_shape_list = ["sin", "random", "constant", "linear", "cos"]
+    # line_shape_list = ["constant"]
     exclude_coherent_list = [False, True]
     shutup.please()
-    for bandwidth in bandwidth_list:
-        detector_parameters.bandwidth = bandwidth
-        for smoothing_method in smoothing_method_list:
-            for snr in snr_list:
-                for line_shape in line_shape_list:
-                    for exclude_coherent in exclude_coherent_list:
-                        algorithm_parameters = AlgorithmConfiguration(snr=snr,
-                                                                      line_shape=line_shape,
-                                                                      exclude_coherent=exclude_coherent,
-                                                                      smoothing_method=smoothing_method)
-                        tune_measurement_algorithm(synchrotron_parameters, detector_parameters, algorithm_parameters)
+    for smoothing_method in smoothing_method_list:
+        for snr in snr_list:
+            for line_shape in line_shape_list:
+                for exclude_coherent in exclude_coherent_list:
+                    algorithm_parameters = AlgorithmConfiguration(snr=snr,
+                                                                  line_shape=line_shape,
+                                                                  exclude_coherent=exclude_coherent,
+                                                                  smoothing_method=smoothing_method,
+                                                                  f_rev_mode=7.5e6)
+                    tune_measurement_algorithm(synchrotron_parameters, detector_parameters, algorithm_parameters)
                 
