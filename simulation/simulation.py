@@ -65,8 +65,8 @@ def tune_measurement_algorithm(synchrotron_parameters: SynchrotronConfiguration,
     failed_to_detect = np.zeros_like(f_rev_range, dtype=bool)
     # batch_size = int(2 ** np.ceil(np.log2(2 * schottky_harmonic * np.max(f_rev_range) / min_freq_res)))
     batch_size = int(2 ** np.ceil(np.log2(np.max(f_rev_range) / min_freq_res)))
-    dkf = DualDetectorAdaptiveKalmanFilter(initial_state=qx)
-    akf_ref = AdaptiveKalmanFilter()
+    dkf = AdaptiveSensorFusionKalmanFilter(initial_state=qx)
+    akf_ref = AdaptiveKalmanFilter(transition_covariance_Q=0.1*np.eye(2))
     akf_meas = AdaptiveKalmanFilter()
     q_measured = 0.3
     for i in range(len(qx_list)):
@@ -325,12 +325,12 @@ def tune_measurement_algorithm(synchrotron_parameters: SynchrotronConfiguration,
 
 if __name__ == "__main__":
     synchrotron_parameters = SynchrotronConfiguration()
-    detector_parameters = DetectorConfiguration(bandwidth=10e6)
+    detector_parameters = DetectorConfiguration(bandwidth=3e6)
     smoothing_method_list = ["gaussian", "sgolay"]
-    # smoothing_method_list = ["gaussian"]
+    smoothing_method_list = ["gaussian"]
     snr_list = [-20, -15, -10]
-    # snr_list = [-20]
-    line_shape_list = ["sin", "random", "constant", "linear", "cos"]
+    snr_list = [-20]
+    line_shape_list = ["constant", "linear", "random", "sin", "cos"]
     # line_shape_list = ["constant"]
     exclude_coherent_list = [False, True]
     shutup.please()
@@ -342,6 +342,6 @@ if __name__ == "__main__":
                                                                   line_shape=line_shape,
                                                                   exclude_coherent=exclude_coherent,
                                                                   smoothing_method=smoothing_method,
-                                                                  f_rev_mode=4e6)
+                                                                  f_rev_mode="ramping")
                     tune_measurement_algorithm(synchrotron_parameters, detector_parameters, algorithm_parameters)
                 

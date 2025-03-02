@@ -1101,7 +1101,7 @@ class EMA_PSD:
         """
         return self.tune_unit[np.argmax(self.psd)]  # Return the tune unit with the maximum PSD
 
-class DualDetectorAdaptiveKalmanFilter:
+class AdaptiveSensorFusionKalmanFilter:
     def __init__(
             self,
             initial_state=0.5,
@@ -1250,12 +1250,43 @@ class DualDetectorAdaptiveKalmanFilter:
         total = self.w1 + self.w2
         return self.w1 / total, self.w2 / total  # Normalize weights to ensure they sum to 1
 
+class DualDetectorKalmanFilter:
+    dt = 1.0
+    def __init__(self,
+                 transition_matrix=np.array([[1, dt],
+                                             [0, 1]]),
+                 observation_matrix=np.array([[1, 0],
+                                              [1, 0]]),
+                 transition_covariance=0.01 * np.eye(2),
+                 initial_state_mean=np.array([0.0, 0.0]),
+                 initial_state_covariance=np.eye(2)
+                 ):
+        self.state_mean = initial_state_mean
+        self.state_covariance = initial_state_covariance
+        self.filtered_state_means = []
+        self.kf = KalmanFilter(
+            transition_matrices=transition_matrix,
+            observation_matrices=observation_matrix,
+            initial_state_mean=initial_state_mean,
+            initial_state_covariance=initial_state_covariance,
+            transition_covariance=transition_covariance
+        )
+
+    def predict_update(self, z1, z2):
+        measurements = np.array([z1, z2])
+        self.state_mean, self.state_covariance \
+            = self.kf.filter_update(
+            self.state_mean,
+            self.state_covariance,
+            measurements)
+        self.filtered_state_means.append(self.state_mean[0])
+        return self.state_mean[0]
 
 class AdaptiveKalmanFilter:
     def __init__(self,
-                 transition_matrix_A=np.array([[1, 1], [0, 1]]),
+                 transition_matrix_A=np.triu(np.ones((2, 2), dtype=int)),
                  transition_covariance_Q=0.01*np.eye(2),
-                 initial_state=np.array([0.3, 0])):
+                 initial_state=np.array([0.3, 0.1])):
         self.A = transition_matrix_A
         self.Q = transition_covariance_Q
         self.filtered_state_means = [initial_state]
@@ -1264,10 +1295,12 @@ class AdaptiveKalmanFilter:
                                transition_covariance=self.Q)
 
     def predict_update(self, measurement):
-        current_state_means, current_state_covariances \
+        state_mean, state_covariance \
             = self.kf.filter_update(self.filtered_state_means[-1],
                                     self.filtered_state_covariances[-1],
                                     measurement)
-        self.filtered_state_means.append(current_state_means)
-        self.filtered_state_covariances.append(current_state_covariances)
-        return current_state_means
+        self.filtered_state_means.append(state_mean)
+        self.filtered_state_covariances.append(state_covariance)
+        return state_mean
+
+
