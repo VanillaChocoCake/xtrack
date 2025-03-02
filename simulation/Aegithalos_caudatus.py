@@ -17,6 +17,7 @@ import pickle
 from scipy.interpolate import interp1d, CubicSpline, lagrange, UnivariateSpline
 from collections import deque
 import h5py
+from pykalman import KalmanFilter
 
 def read_pkl(filename: str) -> dict:
     """Load serialized Python objects from pickle file.
@@ -371,9 +372,9 @@ def plot_measured_results(dic: dict=None,
             dic = pickle.load(f)
     qx = np.array(dic['qx'])
     failed_to_detect = np.array(dic['failed_to_detect'])
-    q_ref_filtered = np.array(dic['q_ref_filtered'])
+    q_ref = np.array(dic['q_ref'])
     q_predicted = np.array(dic['q_predicted'])
-    q_measured_filtered = np.array(dic['q_measured_filtered'])
+    q_measured = np.array(dic['q_measured'])
     # peak_detection = np.array(dic['peak_detection'])
     # cf = np.array(dic['curve_fitting'])
     # weight_ref = np.array(dic['weight_ref'])
@@ -383,9 +384,9 @@ def plot_measured_results(dic: dict=None,
     plt.plot(qx + 0.01, label='nominal + 0.01')
     plt.plot(qx - 0.01, label='nominal - 0.01')
     plt.plot(failed_to_detect, label='not covered area')
-    plt.plot(q_ref_filtered, 'o', label='reference (filtered)', markersize=1)
+    plt.plot(q_ref, 'o', label='reference (filtered)', markersize=1)
     plt.plot(q_predicted, 'v', label='predicted', markersize=1)
-    plt.plot(q_measured_filtered, 's', label='measured (filtered)', markersize=1)
+    plt.plot(q_measured, 's', label='measured (filtered)', markersize=1)
     # plt.plot(peak_detection, '*', label='peak detection', markersize=1)
     # plt.plot(cf, 'p', label='curve fitting', markersize=1)
     # plt.plot(weight_ref, label='weight_ref')
@@ -1003,7 +1004,7 @@ def gaussian_filter(x_data: np.ndarray,
         raise ValueError("Window size must be ≥ 3")
     if window_size % 2 == 0:
         window_size += 1
-        print(f"Warning: The window size has been automatically adjusted to an odd number: {window_size}")
+        # print(f"Warning: The window size has been automatically adjusted to an odd number: {window_size}")
 
     # Convert the input data to a numpy array
     x = np.asarray(x_data, dtype=np.float64)
@@ -1108,8 +1109,8 @@ class DualDetectorAdaptiveKalmanFilter:
             process_noise=0.06,
             measurement_noise=2.6 ** 2,  # Initial measurement noise for both detectors
             max_len=8,
-            alpha=0.4,
-            min_weight=0
+            alpha=0.2,
+            min_weight=0.1
     ):
         """
         Initializes the Dual Detector Adaptive Kalman Filter with the given parameters.
@@ -1132,9 +1133,9 @@ class DualDetectorAdaptiveKalmanFilter:
         self.R1 = measurement_noise  # Initial measurement noise for detector 1
         self.R2 = measurement_noise  # Initial measurement noise for detector 2
 
-        # Initial weights for the detectors (arbitrary large values)
-        self.w1 = 114514
-        self.w2 = 1919810
+        # Initial weights for the detectors
+        self.w1 = 0.5
+        self.w2 = 0.5
 
         # Residual history windows for each detector
         self.window1 = deque(maxlen=max_len)  # Residual history for detector 1
@@ -1249,46 +1250,24 @@ class DualDetectorAdaptiveKalmanFilter:
         total = self.w1 + self.w2
         return self.w1 / total, self.w2 / total  # Normalize weights to ensure they sum to 1
 
-class MADFilter:
-    def __init__(self, window_size=10, threshold=2):
-        """
-        Traditional MAD-based outlier detector with sliding window
-        :param window_size: Size of the data window for MAD calculation
-        :param threshold: Threshold multiplier for MAD-based detection
-        """
-        self.window_size = window_size
-        self.threshold = threshold
-        self.data_window = []
-        self.filtered_values = []
 
-    def _mad(self, data):
-        """Helper function to compute MAD"""
-        median = np.median(data)
-        abs_dev = np.abs(data - median)
-        return np.median(abs_dev) * 1.4826  # Scaled MAD
+class AdaptiveKalmanFilter:
+    def __init__(self,
+                 transition_matrix_A=np.array([[1, 1], [0, 1]]),
+                 transition_covariance_Q=0.01*np.eye(2),
+                 initial_state=np.array([0.3, 0])):
+        self.A = transition_matrix_A
+        self.Q = transition_covariance_Q
+        self.filtered_state_means = [initial_state]
+        self.filtered_state_covariances = [np.array([[0, 0], [0, 0]])]
+        self.kf = KalmanFilter(transition_matrices=self.A,
+                               transition_covariance=self.Q)
 
-    def process(self, new_value):
-        """
-        Process new data point with traditional MAD method
-        :param new_value: New measurement value
-        :return: Filtered value (outliers replaced with window median)
-        """
-        # Maintain sliding window
-        self.data_window.append(new_value)
-        if len(self.data_window) > self.window_size:
-            self.data_window.pop(0)
-
-        # Calculate statistics
-        if len(self.data_window) >= self.window_size//2:  # Minimum samples for meaningful MAD
-            current_median = np.median(self.data_window)
-            mad = self._mad(np.array(self.data_window))
-            upper_bound = current_median + self.threshold * mad
-            lower_bound = current_median - self.threshold * mad
-
-            # Replace outliers with median
-            filtered = new_value if (lower_bound <= new_value <= upper_bound) else current_median
-        else:
-            filtered = new_value  # Pass through initially
-
-        self.filtered_values.append(filtered)
-        return filtered
+    def predict_update(self, measurement):
+        current_state_means, current_state_covariances \
+            = self.kf.filter_update(self.filtered_state_means[-1],
+                                    self.filtered_state_covariances[-1],
+                                    measurement)
+        self.filtered_state_means.append(current_state_means)
+        self.filtered_state_covariances.append(current_state_covariances)
+        return current_state_means

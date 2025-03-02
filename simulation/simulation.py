@@ -1,6 +1,5 @@
 import matplotlib.pyplot as plt
 import numpy as np
-
 import xtrack as xt
 import xpart as xp
 import xobjects as xo
@@ -9,8 +8,6 @@ from Aegithalos_caudatus import *
 import shutup
 import pickle
 import scipy.constants as sc
-
-from simulation.readNplot import mad_result
 
 
 def tune_measurement_algorithm(synchrotron_parameters: SynchrotronConfiguration,
@@ -56,10 +53,10 @@ def tune_measurement_algorithm(synchrotron_parameters: SynchrotronConfiguration,
     qx_list = generate_q_list(line_shape, len(f_rev_range), qx - 0.09, qx + 0.09)
     qy_list = generate_q_list(line_shape, len(f_rev_range), qy - 0.09, qy + 0.09)
     # plot(qx_list)
-    q_ref_original_list = []
-    q_measured_original_list = []
-    q_ref_filtered_list = []
-    q_measured_filtered_list = []
+    q_ref_list = []
+    q_ref_filtered = []
+    q_measured_list = []
+    q_measured_filtered = []
     q_predicted_list = []
     peak_detection_list = []
     cf_list = []
@@ -68,10 +65,9 @@ def tune_measurement_algorithm(synchrotron_parameters: SynchrotronConfiguration,
     failed_to_detect = np.zeros_like(f_rev_range, dtype=bool)
     # batch_size = int(2 ** np.ceil(np.log2(2 * schottky_harmonic * np.max(f_rev_range) / min_freq_res)))
     batch_size = int(2 ** np.ceil(np.log2(np.max(f_rev_range) / min_freq_res)))
-    # kf = AdaptiveKalmanFilter(initial_state=qx)
     dkf = DualDetectorAdaptiveKalmanFilter(initial_state=qx)
-    madf_ref = MADFilter()
-    madf_measured = MADFilter()
+    akf_ref = AdaptiveKalmanFilter()
+    akf_meas = AdaptiveKalmanFilter()
     q_measured = 0.3
     for i in range(len(qx_list)):
         print(i)
@@ -246,9 +242,10 @@ def tune_measurement_algorithm(synchrotron_parameters: SynchrotronConfiguration,
             assert (q_ref > lower_limit) and (q_ref < upper_limit)
         except:
             q_ref = np.mean(tune_unit[index_bool_maxima])
-        q_ref_original_list.append(q_ref)
-        q_ref = madf_ref.process(q_ref)
-        q_ref_filtered_list.append(q_ref)
+        q_ref_list.append(q_ref)
+        q_ref = akf_ref.predict_update(q_ref)[0]
+        q_ref_filtered.append(q_ref)
+
 
         # Predict the tune value using adaptive dual sensor Kalman filter
         q_pred = dkf.predict_update(q_ref, q_measured)
@@ -264,9 +261,9 @@ def tune_measurement_algorithm(synchrotron_parameters: SynchrotronConfiguration,
         q_measured_index = np.argmax(confidence)
         q_measured = tune_unit[index_bool_maxima][q_measured_index]
         q_confidence = max(confidence)
-        q_measured_original_list.append(q_measured)
-        q_measured = madf_measured.process(q_measured)
-        q_measured_filtered_list.append(q_measured)
+        q_measured_list.append(q_measured)
+        q_measured = akf_meas.predict_update(q_measured)[0]
+        q_measured_filtered.append(q_measured)
 
         # Update previous PSD
         ema_psd.append(tune_unit, psd)
@@ -306,11 +303,11 @@ def tune_measurement_algorithm(synchrotron_parameters: SynchrotronConfiguration,
         )
 
     dic = {'qx': qx_list,
-           'q_ref_original': q_ref_original_list,
-           'q_ref_filtered': q_ref_filtered_list,
+           'q_ref': q_ref_list,
+           'q_ref_filtered': q_ref_filtered,
            'q_predicted': q_predicted_list,
-           'q_measured_original': q_measured_original_list,
-           'q_measured_filtered': q_measured_filtered_list,
+           'q_measured': q_measured_list,
+           'q_measured_filtered': q_measured_filtered,
            'peak_detection': peak_detection_list,
            'curve_fitting': cf_list,
            'failed_to_detect': failed_to_detect,
@@ -345,6 +342,6 @@ if __name__ == "__main__":
                                                                   line_shape=line_shape,
                                                                   exclude_coherent=exclude_coherent,
                                                                   smoothing_method=smoothing_method,
-                                                                  f_rev_mode=7.5e6)
+                                                                  f_rev_mode=4e6)
                     tune_measurement_algorithm(synchrotron_parameters, detector_parameters, algorithm_parameters)
                 
