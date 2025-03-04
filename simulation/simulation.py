@@ -70,7 +70,7 @@ def tune_measurement_algorithm(synchrotron_parameters: SynchrotronConfiguration,
     batch_size = int(2 ** exponential)
     dkf = AdaptiveSensorFusionKalmanFilter(initial_state=qx)
     akf_ref = AdaptiveKalmanFilter(transition_covariance_Q=0.1*np.eye(2))
-    akf_meas = AdaptiveKalmanFilter()
+    akf_meas = AdaptiveKalmanFilter(transition_covariance_Q=0.001*np.eye(2))
     q_measured = 0.3
     for i in range(len(qx_list)):
         print(i)
@@ -208,9 +208,9 @@ def tune_measurement_algorithm(synchrotron_parameters: SynchrotronConfiguration,
         if exclude_coherent:
 
             # f, psd_ori = cal_psd(x_data, f_sampling)
-
+            _, noise = generate_noisy_signal(x_data, snr)
             x_data = exclude_coherent_signal(t, x_data, f_sampling, np.array([0.21, 0.49])*f_rev)
-
+            x_data += noise
             # _, psd_excluded = cal_psd(x_data, f_sampling)
             # f /= f_rev
             # mask = (f > 0.22) & (f < 0.42)
@@ -231,8 +231,9 @@ def tune_measurement_algorithm(synchrotron_parameters: SynchrotronConfiguration,
             #     header=header,
             #     comments=''  # 移除自动添加的注释符
             # )
+        else:
+            x_data, noise = generate_noisy_signal(x_data, snr)
 
-        x_data, noise = generate_noisy_signal(x_data, snr)
         x_data_reshaped = windowed_reshape(x_data, batch_size)
         noise_reshaped = windowed_reshape(noise, batch_size)
 
@@ -304,11 +305,11 @@ def tune_measurement_algorithm(synchrotron_parameters: SynchrotronConfiguration,
         # q_curve_fitting = cf_params[1]
         # cf_list.append(q_curve_fitting)
 
-        plt.figure()
-        plt.plot(tune_unit, normalize_to_0_1(psd), label="sum")
-        plt.plot(tune_unit, normalize_to_0_1(ema_psd.psd), label="ref")
-        plt.legend()
-        plt.show()
+        # plt.figure()
+        # plt.plot(tune_unit, normalize_to_0_1(psd), label="sum")
+        # plt.plot(tune_unit, normalize_to_0_1(ema_psd.psd), label="ref")
+        # plt.legend()
+        # plt.show()
         print(
             f"qx:{qx: .4f}, "
             f"q_ref:{q_ref: .4f}, "
@@ -339,6 +340,7 @@ def tune_measurement_algorithm(synchrotron_parameters: SynchrotronConfiguration,
     plt.plot(w2_list, label="w2")
     plt.legend()
     plt.show()
+    print(1)
 
 if __name__ == "__main__":
     synchrotron_parameters = SynchrotronConfiguration()

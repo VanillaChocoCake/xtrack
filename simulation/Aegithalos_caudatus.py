@@ -1284,7 +1284,7 @@ class AdaptiveSensorFusionKalmanFilter:
         self._adjust_detector_weights()
 
         # Update the process noise based on the residual of the fused measurement
-        self.Q = self.alpha * abs(residual_fused) + (1 - self.alpha) * self.Q
+        self.Q = self.alpha * residual_fused**2 + (1 - self.alpha) * self.Q
 
         return self.x
 
@@ -1333,7 +1333,7 @@ class AdaptiveKalmanFilter:
     def __init__(self,
                  transition_matrix_A=np.triu(np.ones((2, 2), dtype=int)),
                  transition_covariance_Q=0.001*np.eye(2),
-                 initial_state=np.array([0.3, 0.1])):
+                 initial_state=np.array([0.3, 0])):
         self.A = transition_matrix_A
         self.Q = transition_covariance_Q
         self.filtered_state_means = [initial_state]

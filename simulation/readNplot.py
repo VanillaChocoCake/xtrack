@@ -6,7 +6,7 @@ from Aegithalos_caudatus import read_pkl, AdaptiveKalmanFilter, save_structured_
 
 
 
-line_shape = "random"
+line_shape = "constant"
 dic = read_pkl(f"10MHz_gaussian_{line_shape}_-20_frev_7500000.0_with_coherent.pkl")
 q_ref = dic['q_ref']
 q_measured = dic['q_measured']
@@ -26,15 +26,16 @@ for q in q_measured:
     filtered.append(res)
 # 可视化对比
 plt.figure()
-# plt.plot(q_measured, label="meas")
-plt.plot(q_ref, label="ref")
-# plt.plot(filtered, 'o-', label="filtered", markersize=0.1)
-plt.plot(dic['qx'], label="Ground truth")
+plt.plot(1-np.array(q_measured), label="meas")
+plt.plot(1-np.array(q_ref), label="ref")
+plt.plot(filtered, 'o-', label="filtered", markersize=0.1)
+plt.plot(1-np.array(dic['qx']), label="Ground truth")
 # plt.plot(dic['failed_to_detect'].astype(int), label="Failed to detect")
 plt.xlabel("Time step")
 plt.ylabel("Signal value")
 plt.title("Comparative Performance: KF with Adaptive MAD vs Traditional MAD")
 plt.legend()
 plt.show()
-save_structured_txt([x, 1-dic['qx'], 1-np.array(q_ref)], ['time(ms)', 'ground_truth', 'reference'], f"ref_{line_shape}.txt")
-print(sum(abs(np.array(filtered[50:])-dic['qx'][50:])))
+save_structured_txt([x, 1-dic['qx'], 1-np.array(dic['q_ref_filtered']), 1-np.array(dic['q_measured_filtered']), 1-np.array(dic['q_predicted']), np.array(dic['weight_ref']), np.array(dic['weight_measured'])],
+                    ['time(ms)', 'ground_truth', 'reference_filtered', 'measured_filtered', 'predicted', 'w1_ref', 'w2_measured'],
+                    f"fusion_{line_shape}.txt")
