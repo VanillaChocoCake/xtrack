@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 from scipy.fft import fft, fftshift
 from scipy import signal
 from scipy.signal import savgol_filter, find_peaks
-from scipy.signal.windows import hamming
+from scipy.signal.windows import hamming, hann
 from scipy.ndimage import gaussian_filter1d
 from scipy.optimize import curve_fit
 import bisect
@@ -18,6 +18,15 @@ from scipy.interpolate import interp1d, CubicSpline, lagrange, UnivariateSpline
 from collections import deque
 import h5py
 from pykalman import KalmanFilter
+import scipy.constants as const
+
+def cal_tune_shift_rate(chromaticity, Ek, circumference, rf_voltage):
+    E0 = const.value('proton mass energy equivalent in MeV')
+    gamma = Ek/E0 + 1
+    beta = np.sqrt(1 - 1/gamma**2)
+    E0_J = E0 * 1e6 * const.eV
+    return chromaticity*const.e*rf_voltage*const.c/(beta*gamma*E0_J*circumference)
+
 
 def read_pkl(filename: str) -> dict:
     """Load serialized Python objects from pickle file.
@@ -59,38 +68,39 @@ def load_matlab_v73(filename: str,
             return np.array(f[variable_name])
         raise KeyError(f"Variable {variable_name} not found")
 
+
 def interpolation(data: np.ndarray,
                   interpolate_method: str = "cubic",
                   interpolate_coef: float = 1) -> np.ndarray:
     """Perform 1D interpolation with various methods.
 
     Args:
-        data: Input signal for interpolation
-        interpolate_method: One of ['linear', 'cubic', 'lagrange', 'univariate']
-        interpolate_coef: Upsampling factor (>=1)
+        data: Input signal for interpolation.
+        interpolate_method: One of ['linear', 'cubic', 'lagrange', 'univariate'].
+        interpolate_coef: Upsampling factor (>=1).
 
     Returns:
-        Interpolated signal
+        Interpolated signal.
 
     Raises:
-        ValueError: For unsupported interpolation methods
+        ValueError: For unsupported interpolation methods.
     """
     batch_size = len(data)
     if interpolate_method:
         freq = np.linspace(0, batch_size - 1, batch_size)
         freq_new = np.linspace(0, batch_size - 1, int(interpolate_coef * batch_size))
-
-        method_map = {
-            "linear": interp1d(freq, data),
-            "cubic": CubicSpline(freq, data),
-            "lagrange": lagrange(freq, data),
-            "univariate": UnivariateSpline(freq, data, s=np.mean(data))
-        }
-
-        if interpolate_method not in method_map:
+        if interpolate_method == "linear":
+            interpolator = interp1d(freq, data)
+        elif interpolate_method == "cubic":
+            interpolator = CubicSpline(freq, data)
+        elif interpolate_method == "lagrange":
+            interpolator = lagrange(freq, data)
+        elif interpolate_method == "univariate":
+            interpolator = UnivariateSpline(freq, data, s=np.mean(data))
+        else:
             raise ValueError(f"Invalid method: {interpolate_method}")
 
-        return method_map[interpolate_method](freq_new)
+        return interpolator(freq_new)
     return data
 
 def exclude_coherent_spectrum(tune_unit: np.ndarray,
@@ -643,7 +653,7 @@ def spectral_processing(x_data: np.ndarray,
                         tune_unit_upper_limit: float,
                         smoothing_method: str = "gaussian",
                         interpolate_method: str = "cubic",
-                        interpolate_coef: float = 1,
+                        interpolate_coef: float = 2,
                         procedure: int = 1) -> tuple:
     """
     Processes spectral data using Fast Fourier Transform (FFT), folding, filtering,
@@ -690,14 +700,14 @@ def spectral_processing(x_data: np.ndarray,
     # ==================================================================
     # Precompute Global Parameters (Avoid Repetitive Computation in Loops)
     # ==================================================================
-    # Generate full frequency axis (computed once)
-    base_freqs, _ = fold_spectrum(np.empty(batch_size), f_rev, f_sampling)
-    tune_unit = base_freqs / f_rev
-    freq_mask = (tune_unit >= tune_unit_lower_limit) & (tune_unit <= tune_unit_upper_limit)
-    final_tune_unit = tune_unit[freq_mask]
-
-    # Preallocate memory for PSD storage
-    psd_matrix = np.zeros((num_batches, len(tune_unit)), dtype=np.float64)
+    # # Generate full frequency axis (computed once)
+    # base_freqs, _ = fold_spectrum(np.empty(batch_size), f_rev, f_sampling)
+    # tune_unit = base_freqs / f_rev
+    # freq_mask = (tune_unit >= tune_unit_lower_limit) & (tune_unit <= tune_unit_upper_limit)
+    # final_tune_unit = tune_unit[freq_mask]
+    #
+    # # Preallocate memory for PSD storage
+    # psd_matrix = np.zeros((num_batches, len(tune_unit)), dtype=np.float64)
 
     # ==================================================================
     # Core Batch Processing (Vectorization + Memory Optimization)
@@ -709,9 +719,17 @@ def spectral_processing(x_data: np.ndarray,
     # Compute Power Spectral Density (PSD) for each batch
     psd_all = np.abs(spectra_shifted) ** 2 / (batch_size * f_sampling)
 
+    temp = interpolation(psd_all[0], "cubic", interpolate_coef)
+    base_freqs, _ = fold_spectrum(np.empty(len(temp)), f_rev, f_sampling)
+    tune_unit = base_freqs / f_rev
+    freq_mask = (tune_unit >= tune_unit_lower_limit) & (tune_unit <= tune_unit_upper_limit)
+    final_tune_unit = tune_unit[freq_mask]
+    psd_matrix = np.zeros((num_batches, len(tune_unit)), dtype=np.float64)
+
     # Perform filtering and folding per batch (loop retained for memory efficiency)
     for i in range(num_batches):
         psd = psd_all[i]
+        psd = interpolation(psd, "cubic", interpolate_coef)
         _, folded = fold_spectrum(psd, f_rev, f_sampling)
 
         if procedure == 1:
@@ -723,8 +741,6 @@ def spectral_processing(x_data: np.ndarray,
                 filtered = gaussian_filter(folded, window_size)
             else:
                 filtered = savgol_filter(psd, window_size, 5)
-
-            filtered = interpolation(filtered, "univariate", 1.0)
             psd_matrix[i] = filtered
 
     # ==================================================================
@@ -736,7 +752,7 @@ def spectral_processing(x_data: np.ndarray,
         if smoothing_method == "gaussian":
             final_psd = gaussian_filter(final_psd, window_size)
         else:
-            final_psd = savgol_filter(final_psd, window_size, 5)
+            final_psd = savgol_filter(final_psd, window_size, 2)
 
         final_psd = final_psd[freq_mask]
     elif procedure == 2:
@@ -744,12 +760,11 @@ def spectral_processing(x_data: np.ndarray,
         final_psd = psd_matrix[:, freq_mask].sum(axis=0)
 
     # Make PSD bigger than 0
-    final_psd -= np.min(final_psd)
     final_psd *= 1e5
 
-    # Apply interpolation to refine the final PSD
-    final_psd = interpolation(final_psd, interpolate_method, interpolate_coef)
-
+    # # Apply interpolation to refine the final PSD
+    # final_psd = interpolation(final_psd, interpolate_method, interpolate_coef)
+    #
     # Generate final frequency axis after interpolation
     final_tune_unit = np.linspace(final_tune_unit[0], final_tune_unit[-1], num=len(final_psd))
 
@@ -761,6 +776,37 @@ def spectral_processing(x_data: np.ndarray,
     final_psd = np.clip(final_psd, 0, None)  # Ensure non-negative PSD values
 
     return final_tune_unit, final_psd
+
+
+def save_structured_txt(data_list, name_list, filename):
+    """
+    将多个数据列保存为结构化TXT文件
+
+    参数：
+    data_list  : 包含多个一维数组的列表，每个数组代表一列数据
+    name_list  : 包含每列名称的列表，长度需与data_list一致
+    filename   : 要保存的文件名（包含路径）
+    """
+    # 校验输入参数
+    assert len(data_list) == len(name_list), "数据列数与名称数不匹配"
+    assert all(len(arr) == len(data_list[0]) for arr in data_list), "各数据列长度不一致"
+
+    # 按列堆叠数据
+    data_to_save = np.column_stack(tuple(data_list))
+
+    # 生成文件头（带#号，名称空格分隔）
+    header = "# " + " ".join(name_list)
+
+    # 保存文件
+    np.savetxt(
+        filename,
+        data_to_save,
+        fmt='%.6e',  # 科学计数法，保留6位小数
+        delimiter='    ',  # 4空格分隔符
+        header=header,
+        comments='',  # 禁用自动添加的注释符
+        encoding='utf-8'
+    )
 
 def windowed_reshape(arr: np.ndarray,
                      batch_size: int) -> np.ndarray:
@@ -789,6 +835,7 @@ def windowed_reshape(arr: np.ndarray,
 
     # Generate a Hamming window of the same size as each batch
     window = hamming(batch_size)
+    window = hann(batch_size)
 
     # Apply the Hamming window to each batch and return the result
     return reshaped * window
@@ -1285,7 +1332,7 @@ class DualDetectorKalmanFilter:
 class AdaptiveKalmanFilter:
     def __init__(self,
                  transition_matrix_A=np.triu(np.ones((2, 2), dtype=int)),
-                 transition_covariance_Q=0.01*np.eye(2),
+                 transition_covariance_Q=0.001*np.eye(2),
                  initial_state=np.array([0.3, 0.1])):
         self.A = transition_matrix_A
         self.Q = transition_covariance_Q

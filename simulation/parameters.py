@@ -36,26 +36,6 @@ def calculate_slip_factor(f_rev: float,
 def calculate_bets(slip_factor: float, length: float = LENGTH, qs: float = QS) -> float:
     return slip_factor * length / (2 * np.pi * qs)
 
-BANDWIDTH: float = 3e6
-FC: float = 38.5e6
-
-SIDE_BAND_WIDTH: float = 500e3
-F_REV_INCREASE_RATE: float = 10e6
-MIN_TRACK_TURNS: int = 10
-SNR: float = -20
-MIN_FREQ_RES: float = 10e3
-SIMULATION_TIME: float = 0.001
-MAX_LEN: int = 10
-DECAY_FACTOR: float = 0.8
-LINE_SHAPE: str = "cos"
-F_REV_MODE: float = 7.5e6
-ALPHA: float = 0.45
-EXCLUDE_COHERENT: bool = False
-SCHOTTSKY_HARMONIC: float = 0.5
-INTERPOLATE_METHOD: str = "cubic"
-INTERPOLATE_COEF: int = 2
-SMOOTHING_METHOD: str = "gaussian"
-
 @dataclass
 class SynchrotronConfiguration:
     length: float = LENGTH
@@ -80,6 +60,9 @@ class SynchrotronConfiguration:
     nemitt: float = NEMITT
     intensity: int = INTENSITY
 
+BANDWIDTH: float = 3e6
+FC: float = 38.5e6
+
 @dataclass
 class DetectorConfiguration:
     bandwidth: float = BANDWIDTH
@@ -90,6 +73,23 @@ class DetectorConfiguration:
     def __post_init__(self):
         self.fl = self.fc - self.bandwidth / 2
         self.fh = self.fc + self.bandwidth / 2
+
+SIDE_BAND_WIDTH: float = 500e3
+F_REV_INCREASE_RATE: float = 10e6
+MIN_TRACK_TURNS: int = 10
+SNR: float = -20
+MIN_FREQ_RES: float = 10e3
+SIMULATION_TIME: float = 0.001
+MAX_LEN: int = 10
+DECAY_FACTOR: float = 0.8
+LINE_SHAPE: str = "cos"
+F_REV_MODE: float = 7.5e6
+ALPHA: float = 0.45
+EXCLUDE_COHERENT: bool = False
+SCHOTTSKY_HARMONIC: float = 5
+INTERPOLATE_METHOD: str = "cubic"
+INTERPOLATE_COEF: int = 4
+SMOOTHING_METHOD: str = "gaussian"
 
 @dataclass
 class AlgorithmConfiguration:

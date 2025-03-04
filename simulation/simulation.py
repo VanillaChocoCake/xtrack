@@ -9,7 +9,6 @@ import shutup
 import pickle
 import scipy.constants as sc
 
-
 def tune_measurement_algorithm(synchrotron_parameters: SynchrotronConfiguration,
                                detector_parameters: DetectorConfiguration,
                                algorithm_parameters: AlgorithmConfiguration) -> None:
@@ -63,8 +62,12 @@ def tune_measurement_algorithm(synchrotron_parameters: SynchrotronConfiguration,
     w1_list = []
     w2_list = []
     failed_to_detect = np.zeros_like(f_rev_range, dtype=bool)
-    # batch_size = int(2 ** np.ceil(np.log2(2 * schottky_harmonic * np.max(f_rev_range) / min_freq_res)))
-    batch_size = int(2 ** np.ceil(np.log2(np.max(f_rev_range) / min_freq_res)))
+    min_freq = np.min(f_rev_range)
+    max_freq = np.max(f_rev_range)
+    min_exponential = np.log2(2*schottky_harmonic*min_freq/min_freq_res)
+    max_exponential = np.log2(2*schottky_harmonic*max_freq/min_freq_res)
+    exponential = np.round((min_exponential + max_exponential)/2)
+    batch_size = int(2 ** exponential)
     dkf = AdaptiveSensorFusionKalmanFilter(initial_state=qx)
     akf_ref = AdaptiveKalmanFilter(transition_covariance_Q=0.1*np.eye(2))
     akf_meas = AdaptiveKalmanFilter()
@@ -94,7 +97,7 @@ def tune_measurement_algorithm(synchrotron_parameters: SynchrotronConfiguration,
         f_sampling = 2 * schottky_harmonic * f_rev
         freq_res = f_sampling / batch_size
         side_point_num = sideband_width // (2 * freq_res) + 1
-        window_size = int(max(3, side_point_num // 4))
+        window_size = int(max(3, 2*side_point_num//2 + 1))
         n_turns = int(np.floor(f_rev * simulation_time / min_track_turns) * min_track_turns)
 
         line = xt.Line(elements=[lmap])
@@ -182,6 +185,25 @@ def tune_measurement_algorithm(synchrotron_parameters: SynchrotronConfiguration,
         x_data = BPM.x_mean
         # x_data = BPM.y_mean
         x_data = np.nan_to_num(x_data, nan=0)
+
+        # f, psd = cal_psd(x_data, f_sampling)
+        # f /= f_rev
+        # mask = f >= (schottky_harmonic - 2)
+        # f = f[mask] - (schottky_harmonic - 1)
+        # psd = psd[mask]
+        # data_to_save = np.column_stack((f, psd))
+        # header = (
+        #     "# Tune_unit    psd"
+        # )
+        # np.savetxt(
+        #     f"folding.txt",
+        #     data_to_save,
+        #     fmt='%.6e',  # 控制精度为6位小数
+        #     delimiter='    ',  # 使用4空格分隔列
+        #     header=header,
+        #     comments=''  # 移除自动添加的注释符
+        # )
+
         t = np.linspace(0, len(x_data)/f_sampling, len(x_data))
         if exclude_coherent:
 
@@ -282,16 +304,11 @@ def tune_measurement_algorithm(synchrotron_parameters: SynchrotronConfiguration,
         # q_curve_fitting = cf_params[1]
         # cf_list.append(q_curve_fitting)
 
-        # try:
-        #     if np.abs(q_pred - q_predicted_list[-2]) >= 0.05:
-        #         print("Anomaly")
-        # except:
-        #     pass
-        # plt.figure()
-        # plt.plot(tune_unit, normalize_to_0_1(psd), label="sum")
-        # plt.plot(tune_unit, normalize_to_0_1(q_prev_queue.psd), label="ref")
-        # plt.legend()
-        # plt.show()
+        plt.figure()
+        plt.plot(tune_unit, normalize_to_0_1(psd), label="sum")
+        plt.plot(tune_unit, normalize_to_0_1(ema_psd.psd), label="ref")
+        plt.legend()
+        plt.show()
         print(
             f"qx:{qx: .4f}, "
             f"q_ref:{q_ref: .4f}, "
@@ -325,11 +342,11 @@ def tune_measurement_algorithm(synchrotron_parameters: SynchrotronConfiguration,
 
 if __name__ == "__main__":
     synchrotron_parameters = SynchrotronConfiguration()
-    detector_parameters = DetectorConfiguration(bandwidth=3e6)
+    detector_parameters = DetectorConfiguration(bandwidth=10e6)
     smoothing_method_list = ["gaussian", "sgolay"]
-    smoothing_method_list = ["gaussian"]
+    # smoothing_method_list = ["gaussian"]
     snr_list = [-20, -15, -10]
-    snr_list = [-20]
+    # snr_list = [-20]
     line_shape_list = ["constant", "linear", "random", "sin", "cos"]
     # line_shape_list = ["constant"]
     exclude_coherent_list = [False, True]
@@ -342,6 +359,6 @@ if __name__ == "__main__":
                                                                   line_shape=line_shape,
                                                                   exclude_coherent=exclude_coherent,
                                                                   smoothing_method=smoothing_method,
-                                                                  f_rev_mode="ramping")
+                                                                  f_rev_mode=7.5e6)
                     tune_measurement_algorithm(synchrotron_parameters, detector_parameters, algorithm_parameters)
                 
