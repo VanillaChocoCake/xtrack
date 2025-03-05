@@ -265,20 +265,15 @@ def tune_measurement_algorithm(synchrotron_parameters: SynchrotronConfiguration,
             assert (q_ref > lower_limit) and (q_ref < upper_limit)
         except:
             q_ref = np.mean(tune_unit[index_bool_maxima])
+            q_pred = q_ref
         q_ref_list.append(q_ref)
         q_ref = akf_ref.predict_update(q_ref)[0]
         q_ref_filtered.append(q_ref)
 
 
-        # Predict the tune value using adaptive dual sensor Kalman filter
-        q_pred = dkf.predict_update(q_ref, q_measured)
-        w1, w2 = dkf.detector_weights()
-        w1_list.append(w1)
-        w2_list.append(w2)
-        q_predicted_list.append(q_pred)
-
         # Determination of measured tune (Sensor 2) using weighted linear combination
-        distance = normalize_to_0_1(abs(tune_unit[index_bool_maxima] - (q_ref + q_pred) / 2))
+        # distance = normalize_to_0_1(abs(tune_unit[index_bool_maxima] - (q_ref + q_pred) / 2))
+        distance = normalize_to_0_1(abs(tune_unit[index_bool_maxima] - q_pred))
         weight_distance = 1 - distance
         confidence = alpha * weight_amplitude + (1 - alpha) * weight_distance
         q_measured_index = np.argmax(confidence)
@@ -287,6 +282,13 @@ def tune_measurement_algorithm(synchrotron_parameters: SynchrotronConfiguration,
         q_measured_list.append(q_measured)
         q_measured = akf_meas.predict_update(q_measured)[0]
         q_measured_filtered.append(q_measured)
+
+        # Predict the tune value using adaptive dual sensor Kalman filter
+        q_pred = dkf.predict_update(q_ref, q_measured)
+        w1, w2 = dkf.detector_weights()
+        w1_list.append(w1)
+        w2_list.append(w2)
+        q_predicted_list.append(q_pred)
 
         # Update previous PSD
         ema_psd.append(tune_unit, psd)
@@ -305,11 +307,11 @@ def tune_measurement_algorithm(synchrotron_parameters: SynchrotronConfiguration,
         # q_curve_fitting = cf_params[1]
         # cf_list.append(q_curve_fitting)
 
-        # plt.figure()
-        # plt.plot(tune_unit, normalize_to_0_1(psd), label="sum")
-        # plt.plot(tune_unit, normalize_to_0_1(ema_psd.psd), label="ref")
-        # plt.legend()
-        # plt.show()
+        plt.figure()
+        plt.plot(tune_unit, normalize_to_0_1(psd), label="sum")
+        plt.plot(tune_unit, normalize_to_0_1(ema_psd.psd), label="ref")
+        plt.legend()
+        plt.show()
         print(
             f"qx:{qx: .4f}, "
             f"q_ref:{q_ref: .4f}, "
