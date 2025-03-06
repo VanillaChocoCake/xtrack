@@ -74,7 +74,7 @@ class DetectorConfiguration:
         self.fl = self.fc - self.bandwidth / 2
         self.fh = self.fc + self.bandwidth / 2
 
-SIDE_BAND_WIDTH: float = 300e3
+SIDEBAND_WIDTH: float = 300e3
 F_REV_INCREASE_RATE: float = 10e6
 MIN_TRACK_TURNS: int = 10
 SNR: float = -20
@@ -93,7 +93,7 @@ SMOOTHING_METHOD: str = "gaussian"
 
 @dataclass
 class AlgorithmConfiguration:
-    sideband_width: float = SIDE_BAND_WIDTH
+    sideband_width: float = SIDEBAND_WIDTH
     f_rev_increase_rate: float = F_REV_INCREASE_RATE
     min_track_turns: int = MIN_TRACK_TURNS
     snr: float = SNR

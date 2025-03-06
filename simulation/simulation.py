@@ -45,8 +45,6 @@ def tune_measurement_algorithm(synchrotron_parameters: SynchrotronConfiguration,
     else:
         qy = synchrotron_parameters.qy
 
-    qx = 0.4
-
     upper_limit = qx + 0.1
     lower_limit = qx - 0.1
     if f_rev_mode == "ramping":
@@ -59,7 +57,10 @@ def tune_measurement_algorithm(synchrotron_parameters: SynchrotronConfiguration,
         f_rev_range = f_rev_mode * np.ones(351)
     qx_list = generate_q_list(line_shape, len(f_rev_range), qx - 0.09, qx + 0.09)
     qy_list = generate_q_list(line_shape, len(f_rev_range), qy - 0.09, qy + 0.09)
-    # plot(qx_list)
+
+    qx_list = signal_loss(qx_list, True)
+    qy_list = signal_loss(qy_list, True)
+
     q_ref_list = []
     q_ref_filtered = []
     q_measured_list = []
@@ -78,7 +79,6 @@ def tune_measurement_algorithm(synchrotron_parameters: SynchrotronConfiguration,
     akf_ref = AdaptiveKalmanFilter(transition_covariance_Q=0.01*np.eye(2))
     akf_meas = AdaptiveKalmanFilter(transition_covariance_Q=0.001*np.eye(2))
     plt.figure()
-    q_measured = 0
     for i in range(len(qx_list)):
         # Part Simulation
         qy = qy_list[i]
@@ -256,7 +256,7 @@ def tune_measurement_algorithm(synchrotron_parameters: SynchrotronConfiguration,
         }
         if not covered_by_detector(central_frequency=detector_parameters.fc, bandwidth=detector_parameters.bandwidth,
                                    sideband_width=sideband_width,
-                                   tune=qx, current_frequency=f_rev):
+                                   tune=qx, current_frequency=f_rev) or qx < 0:
             tune_unit, psd = spectral_processing(x_data=noise_reshaped, **common_spectral_params)
             failed_to_detect[i] = True
             print(f"Betatron tune can not be measured at this frequency.")
@@ -268,14 +268,14 @@ def tune_measurement_algorithm(synchrotron_parameters: SynchrotronConfiguration,
             q_ref = np.mean(tune_unit[find_local_minima(psd)[0]])
             q_pred = np.random.uniform(lower_limit, upper_limit)
         else:
-            q_ref = ema_psd.acquire_q_ref(center=(q_pred + q_measured) / 2)
+            q_ref = ema_psd.acquire_q_ref()
         ema_psd.append(tune_unit, psd)
         q_ref_list.append(q_ref)
         q_ref = akf_ref.predict_update(q_ref)[0]
         q_ref_filtered.append(q_ref)
 
         # Determination of measured tune (Sensor 2) using weighted linear combination
-        q_measured, q_confidence = weighted_linear_combination(tune_unit, psd, (q_ref + q_pred) / 2, alpha)
+        q_measured, q_confidence = weighted_linear_combination(tune_unit, psd, q_pred, alpha)
         q_measured_list.append(q_measured)
         q_measured = akf_meas.predict_update(q_measured)[0]
         q_measured_filtered.append(q_measured)
@@ -319,7 +319,7 @@ def tune_measurement_algorithm(synchrotron_parameters: SynchrotronConfiguration,
         #     print(1)
 
     dic = {'qx': qx_list,
-           'acquire_q_ref': q_ref_list,
+           'q_ref': q_ref_list,
            'q_ref_filtered': q_ref_filtered,
            'q_predicted': q_predicted_list,
            'q_measured': q_measured_list,
@@ -352,7 +352,7 @@ if __name__ == "__main__":
     snr_list = [-20, -15]
     snr_list = [-20]
     line_shape_list = ["linear", "random", "sin", "constant"]
-    # line_shape_list = ["linear", "random", "sin"]
+    # line_shape_list = ["constant"]
     exclude_coherent_list = [False]
     shutup.please()
     for smoothing_method in smoothing_method_list:
@@ -363,7 +363,7 @@ if __name__ == "__main__":
                                                                   line_shape=line_shape,
                                                                   exclude_coherent=exclude_coherent,
                                                                   smoothing_method=smoothing_method,
-                                                                  f_rev_mode=4e6)
+                                                                  f_rev_mode=4.1e6)
                     tune_measurement_algorithm(synchrotron_parameters, detector_parameters, algorithm_parameters)
                 
     print(for_comparison)

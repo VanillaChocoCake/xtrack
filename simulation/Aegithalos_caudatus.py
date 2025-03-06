@@ -383,7 +383,7 @@ def plot_measured_results(dic: dict=None,
             dic = pickle.load(f)
     qx = np.array(dic['qx'])
     failed_to_detect = np.array(dic['failed_to_detect'])
-    q_ref = np.array(dic['acquire_q_ref'])
+    q_ref = np.array(dic['q_ref'])
     q_predicted = np.array(dic['q_predicted'])
     q_measured = np.array(dic['q_measured'])
     # peak_detection = np.array(dic['peak_detection'])
@@ -405,6 +405,14 @@ def plot_measured_results(dic: dict=None,
     plt.title(title)
     plt.legend()
     plt.show()
+
+def signal_loss(q_list: np.ndarray, activate: bool=False) -> np.ndarray:
+    if activate:
+        n = len(q_list)
+        start = int(n // 5)*2
+        end = int(start*1.5)
+        q_list[start:end] = -1
+    return q_list
 
 def find_closest_values(a: float,
                         b: np.ndarray) -> tuple:
@@ -1007,7 +1015,7 @@ def fold_spectrum(spectrum: np.ndarray,
         f_end = (band_idx + 1) * f_rev/2
 
         # Get the bin indices for the current band
-        band_mask = (freqs >= f_start) & (freqs < f_end)
+        band_mask = (freqs > f_start) & (freqs <= f_end)
         band_bins = np.where(band_mask)[0]
 
         # Skip empty bands (edge cases)
@@ -1037,7 +1045,8 @@ def fold_spectrum(spectrum: np.ndarray,
     folded_psd = np.sum(padded_arrays, axis=0)
 
     # Generate the baseband frequency axis
-    base_freqs = np.linspace(0, f_rev / 2, len(folded_psd), endpoint=False)
+    base_freqs = np.linspace(-f_rev / 2, 0, len(folded_psd), endpoint=False)
+    base_freqs = -base_freqs[::-1]
     return base_freqs, folded_psd
 
 def gaussian_filter(x_data: np.ndarray,
@@ -1217,17 +1226,12 @@ class EMA_PSD:
         # Update the tuning unit with the new value
         self.tune_unit = tune_unit
 
-    def acquire_q_ref(self, center):
+    def acquire_q_ref(self):
         """
         Returns the tuning unit corresponding to the maximum PSD value.
         :return: The tuning unit associated with the highest PSD value.
         """
-        if self.first_append:
-            self.q_ref_history.append(0.3)
-        else:
-            q, confidence = weighted_linear_combination(self.tune_unit, self.psd, center, self.alpha)
-            # print(f"EMA: q:{q}, confidence:{confidence*100:.2f}")
-            self.q_ref_history.append(q)
+        self.q_ref_history.append(self.tune_unit[np.argmax(self.psd)])
         return self.q_ref_history[-1]
 
 class AdaptiveSensorFusionKalmanFilter:
