@@ -383,7 +383,7 @@ def plot_measured_results(dic: dict=None,
             dic = pickle.load(f)
     qx = np.array(dic['qx'])
     failed_to_detect = np.array(dic['failed_to_detect'])
-    q_ref = np.array(dic['q_ref'])
+    q_ref = np.array(dic['acquire_q_ref'])
     q_predicted = np.array(dic['q_predicted'])
     q_measured = np.array(dic['q_measured'])
     # peak_detection = np.array(dic['peak_detection'])
@@ -1061,10 +1061,10 @@ def gaussian_filter(x_data: np.ndarray,
     x = np.asarray(x_data, dtype=np.float64)
 
     # Calculate Gaussian kernel parameters
-    # Covers 95% of the energy
+    # Covers 99.7% of the energy
     truncate = 3.0
     # Standard deviation of the Gaussian kernel
-    sigma = (window_size - 1) // 3
+    sigma = (window_size - 1) / 3
 
     # Apply the Gaussian filter (boundary handling mode can be adjusted)
     # return gaussian_filter1d(x, sigma=sigma, truncate=truncate, mode='mirror')
@@ -1116,8 +1116,77 @@ def find_local_minima(psd: np.ndarray) -> (list, list):
     # Return the boolean array and the list of local minima indices
     return index_bool.tolist(), index_value
 
+def weighted_linear_combination(tune_unit: np.ndarray,
+                                psd: np.ndarray,
+                                center: float,
+                                alpha: float):
+    """
+    Computes a weighted linear combination to identify the most probable frequency component
+    based on power spectral density (PSD) analysis.
+
+    Parameters:
+    -----------
+    tune_unit : np.ndarray
+        An array representing the frequency or tune values corresponding to the PSD.
+
+    psd : np.ndarray
+        The power spectral density (PSD) values associated with the frequency components.
+
+    center : float
+        The reference frequency or tune around which the weighting is applied.
+
+    alpha : float
+        A weighting factor (0 ≤ alpha ≤ 1) that determines the relative importance of the
+        PSD amplitude and the proximity to the reference frequency in the confidence calculation.
+
+    Returns:
+    --------
+    wlc : float
+        The estimated frequency component with the highest confidence score.
+
+    wlc_confidence : float
+        The confidence score associated with the selected frequency component.
+
+    Notes:
+    ------
+    - The function first identifies local maxima in the PSD, which are considered potential
+      candidates for the dominant frequency.
+    - The PSD values at these maxima are normalized to the range [0,1] to derive amplitude-based weights.
+    - The distance of each peak from the reference `center` is also normalized and used as an inverse
+      weight, where closer peaks receive higher weights.
+    - A linear combination of these two weights, controlled by `alpha`, determines the confidence of
+      each candidate frequency.
+    - The frequency corresponding to the highest confidence value is selected as the final result.
+    """
+
+    # Identify local maxima in the PSD
+    index_bool_maxima, index_value_maxima = find_local_maxima(psd)
+
+    # Normalize the PSD values at the detected maxima to [0,1] for amplitude-based weighting
+    weight_amplitude = normalize_to_0_1(psd[index_bool_maxima])
+
+    # Compute the absolute distance from the reference center and normalize it
+    distance = normalize_to_0_1(abs(tune_unit[index_bool_maxima] - center))
+
+    # Compute distance-based weight (closer values receive higher weight)
+    weight_distance = 1 - distance
+
+    # Compute confidence score as a weighted sum of amplitude and distance contributions
+    confidence = alpha * weight_amplitude + (1 - alpha) * weight_distance
+
+    # Select the index corresponding to the maximum confidence score
+    wlc_index = np.argmax(confidence)
+
+    # Retrieve the corresponding frequency value
+    wlc = tune_unit[index_bool_maxima][wlc_index]
+
+    # Determine the highest confidence score
+    wlc_confidence = max(confidence)
+
+    return wlc, wlc_confidence
+
 class EMA_PSD:
-    def __init__(self, max_len, decay_factor=0.45, alpha = 0.4):
+    def __init__(self, max_len, decay_factor=0.45, alpha = 0.5):
         """
         Initializes the Exponential Moving Average (EMA) object with the given parameters.
         :param max_len: The maximum length of the signal data.
@@ -1148,7 +1217,7 @@ class EMA_PSD:
         # Update the tuning unit with the new value
         self.tune_unit = tune_unit
 
-    def q_ref(self):
+    def acquire_q_ref(self, center):
         """
         Returns the tuning unit corresponding to the maximum PSD value.
         :return: The tuning unit associated with the highest PSD value.
@@ -1156,19 +1225,10 @@ class EMA_PSD:
         if self.first_append:
             self.q_ref_history.append(0.3)
         else:
-            self.q_ref_history.append(weight_linear_combination(self.tune_unit, self.psd, self.q_ref_history[-1], self.alpha)[0])
+            q, confidence = weighted_linear_combination(self.tune_unit, self.psd, center, self.alpha)
+            # print(f"EMA: q:{q}, confidence:{confidence*100:.2f}")
+            self.q_ref_history.append(q)
         return self.q_ref_history[-1]
-
-def weight_linear_combination(tune_unit: np.ndarray, psd: np.ndarray, center: float, alpha: float):
-    index_bool_maxima, index_value_maxima = find_local_maxima(psd)
-    weight_amplitude = normalize_to_0_1(psd[index_bool_maxima])
-    distance = normalize_to_0_1(abs(tune_unit[index_bool_maxima] - center))
-    weight_distance = 1 - distance
-    confidence = alpha * weight_amplitude + (1 - alpha) * weight_distance
-    wlc_index = np.argmax(confidence)
-    wlc = tune_unit[index_bool_maxima][wlc_index]
-    wlc_confidence = max(confidence)
-    return wlc, wlc_confidence
 
 class AdaptiveSensorFusionKalmanFilter:
     def __init__(

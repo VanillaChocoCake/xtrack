@@ -1,3 +1,4 @@
+import random
 import matplotlib.pyplot as plt
 import numpy as np
 import xtrack as xt
@@ -8,6 +9,10 @@ from Aegithalos_caudatus import *
 import shutup
 import pickle
 import scipy.constants as sc
+
+for_comparison = []
+np.random.seed(114514)
+random.seed(114514)
 
 def tune_measurement_algorithm(synchrotron_parameters: SynchrotronConfiguration,
                                detector_parameters: DetectorConfiguration,
@@ -39,6 +44,9 @@ def tune_measurement_algorithm(synchrotron_parameters: SynchrotronConfiguration,
         qy = 1 - synchrotron_parameters.qy
     else:
         qy = synchrotron_parameters.qy
+
+    qx = 0.4
+
     upper_limit = qx + 0.1
     lower_limit = qx - 0.1
     if f_rev_mode == "ramping":
@@ -69,10 +77,9 @@ def tune_measurement_algorithm(synchrotron_parameters: SynchrotronConfiguration,
     dkf = AdaptiveSensorFusionKalmanFilter(initial_state=qx)
     akf_ref = AdaptiveKalmanFilter(transition_covariance_Q=0.01*np.eye(2))
     akf_meas = AdaptiveKalmanFilter(transition_covariance_Q=0.001*np.eye(2))
-    q_pred = 0.32
     plt.figure()
+    q_measured = 0
     for i in range(len(qx_list)):
-        print(i)
         # Part Simulation
         qy = qy_list[i]
         qx = qx_list[i]
@@ -92,7 +99,7 @@ def tune_measurement_algorithm(synchrotron_parameters: SynchrotronConfiguration,
                                  bets=synchrotron_parameters.bets,
                                  dqx=synchrotron_parameters.dqx, dqy=synchrotron_parameters.dqy,
                                  )
-        print("f_rev:", f_rev)
+        # print("f_rev:", f_rev)
         f_sampling = 2 * schottky_harmonic * f_rev
         freq_res = f_sampling / batch_size
 
@@ -257,19 +264,18 @@ def tune_measurement_algorithm(synchrotron_parameters: SynchrotronConfiguration,
             tune_unit, psd = spectral_processing(x_data=x_data_reshaped, **common_spectral_params)
 
         # Determination of reference tune (Sensor 1)
-        try:
-            q_ref = ema_psd.q_ref()
-            assert (q_ref > lower_limit) and (q_ref < upper_limit)
-        except:
+        if ema_psd.first_append:
             q_ref = np.mean(tune_unit[find_local_minima(psd)[0]])
-            q_pred = q_ref
+            q_pred = np.random.uniform(lower_limit, upper_limit)
+        else:
+            q_ref = ema_psd.acquire_q_ref(center=(q_pred + q_measured) / 2)
+        ema_psd.append(tune_unit, psd)
         q_ref_list.append(q_ref)
         q_ref = akf_ref.predict_update(q_ref)[0]
         q_ref_filtered.append(q_ref)
 
-
         # Determination of measured tune (Sensor 2) using weighted linear combination
-        q_measured, q_confidence = weight_linear_combination(tune_unit, psd, (q_ref + q_pred) / 2, alpha)
+        q_measured, q_confidence = weighted_linear_combination(tune_unit, psd, (q_ref + q_pred) / 2, alpha)
         q_measured_list.append(q_measured)
         q_measured = akf_meas.predict_update(q_measured)[0]
         q_measured_filtered.append(q_measured)
@@ -280,10 +286,6 @@ def tune_measurement_algorithm(synchrotron_parameters: SynchrotronConfiguration,
         w1_list.append(w1)
         w2_list.append(w2)
         q_predicted_list.append(q_pred)
-
-        # Update previous PSD
-        ema_psd.append(tune_unit, psd)
-
 
         # Peak detection method, commonly used to measure coherent tune
         q_peak_detection = tune_unit[np.argmax(psd)]
@@ -300,25 +302,24 @@ def tune_measurement_algorithm(synchrotron_parameters: SynchrotronConfiguration,
         # # q_curve_fitting = akf_cf.predict_update(q_curve_fitting)[0]
         # # cf_filtered.append(q_curve_fitting)
 
-
-        plt.plot(tune_unit, normalize_to_0_1(psd), label="sum")
-        plt.plot(tune_unit, normalize_to_0_1(ema_psd.psd), label="ref")
-        plt.legend()
-        plt.show()
-        print(
-            f"qx:{qx: .4f}, "
-            f"q_ref:{q_ref: .4f}, "
-            f"q_predicted:{q_pred: .4f}, "
-            f"q_measured:{q_measured: .4f}, "
-            f"confidence:{q_confidence * 100: .2f}%, "
-            f"peak_detection:{q_peak_detection: .4f}, "
-            # f"curve_fitting:{q_curve_fitting: .4f}"
-        )
+        # plt.plot(tune_unit, normalize_to_0_1(psd), label="sum")
+        # plt.plot(tune_unit, normalize_to_0_1(ema_psd.psd), label="ref")
+        # plt.legend()
+        # plt.show()
+        # print(
+        #     f"qx:{qx: .4f}, "
+        #     f"acquire_q_ref:{acquire_q_ref: .4f}, "
+        #     f"q_predicted:{q_pred: .4f}, "
+        #     f"q_measured:{q_measured: .4f}, "
+        #     f"confidence:{q_confidence * 100: .2f}%, "
+        #     f"peak_detection:{q_peak_detection: .4f}, "
+        #     # f"curve_fitting:{q_curve_fitting: .4f}"
+        # )
         # if i >= 120:
         #     print(1)
 
     dic = {'qx': qx_list,
-           'q_ref': q_ref_list,
+           'acquire_q_ref': q_ref_list,
            'q_ref_filtered': q_ref_filtered,
            'q_predicted': q_predicted_list,
            'q_measured': q_measured_list,
@@ -341,6 +342,7 @@ def tune_measurement_algorithm(synchrotron_parameters: SynchrotronConfiguration,
     qx_list = np.array(qx_list)
     q_predicted_list = np.array(q_predicted_list)
     print(np.mean(np.abs(qx_list - q_predicted_list)[50:]))
+    for_comparison.append(np.mean(np.abs(qx_list - q_predicted_list)[50:]))
 
 if __name__ == "__main__":
     synchrotron_parameters = SynchrotronConfiguration()
@@ -348,8 +350,8 @@ if __name__ == "__main__":
     smoothing_method_list = ["gaussian"]
     # smoothing_method_list = ["sgolay"]
     snr_list = [-20, -15]
-    # snr_list = [-20]
-    line_shape_list = ["constant", "linear", "random", "sin"]
+    snr_list = [-20]
+    line_shape_list = ["linear", "random", "sin", "constant"]
     # line_shape_list = ["linear", "random", "sin"]
     exclude_coherent_list = [False]
     shutup.please()
@@ -364,3 +366,4 @@ if __name__ == "__main__":
                                                                   f_rev_mode=4e6)
                     tune_measurement_algorithm(synchrotron_parameters, detector_parameters, algorithm_parameters)
                 
+    print(for_comparison)
