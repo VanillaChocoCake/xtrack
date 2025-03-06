@@ -58,20 +58,19 @@ def tune_measurement_algorithm(synchrotron_parameters: SynchrotronConfiguration,
     q_measured_filtered = []
     q_predicted_list = []
     peak_detection_list = []
-    cf_list = []
+    # cf_list = []
+    # cf_filtered = []
     w1_list = []
     w2_list = []
     failed_to_detect = np.zeros_like(f_rev_range, dtype=bool)
-    min_freq = np.min(f_rev_range)
     max_freq = np.max(f_rev_range)
-    min_exponential = np.log2(2*schottky_harmonic*min_freq/min_freq_res)
-    max_exponential = np.log2(2*schottky_harmonic*max_freq/min_freq_res)
-    exponential = np.round((min_exponential + max_exponential)/2)
-    batch_size = int(2 ** exponential)
+    exponential = np.ceil(np.log2(2*schottky_harmonic*max_freq/min_freq_res))
+    batch_size = max(int(2 ** exponential), 4096)
     dkf = AdaptiveSensorFusionKalmanFilter(initial_state=qx)
-    akf_ref = AdaptiveKalmanFilter(transition_covariance_Q=0.1*np.eye(2))
+    akf_ref = AdaptiveKalmanFilter(transition_covariance_Q=0.01*np.eye(2))
     akf_meas = AdaptiveKalmanFilter(transition_covariance_Q=0.001*np.eye(2))
-    q_measured = 0.3
+    q_pred = 0.32
+    plt.figure()
     for i in range(len(qx_list)):
         print(i)
         # Part Simulation
@@ -96,8 +95,8 @@ def tune_measurement_algorithm(synchrotron_parameters: SynchrotronConfiguration,
         print("f_rev:", f_rev)
         f_sampling = 2 * schottky_harmonic * f_rev
         freq_res = f_sampling / batch_size
-        side_point_num = sideband_width // (2 * freq_res) + 1
-        window_size = int(max(3, 2*side_point_num//2 + 1))
+
+        window_size = int(max(3, 2*(sideband_width/freq_res//2)+1))
         n_turns = int(np.floor(f_rev * simulation_time / min_track_turns) * min_track_turns)
 
         line = xt.Line(elements=[lmap])
@@ -258,13 +257,11 @@ def tune_measurement_algorithm(synchrotron_parameters: SynchrotronConfiguration,
             tune_unit, psd = spectral_processing(x_data=x_data_reshaped, **common_spectral_params)
 
         # Determination of reference tune (Sensor 1)
-        index_bool_maxima, index_value_maxima = find_local_maxima(psd)
-        weight_amplitude = normalize_to_0_1(psd[index_bool_maxima])
         try:
             q_ref = ema_psd.q_ref()
             assert (q_ref > lower_limit) and (q_ref < upper_limit)
         except:
-            q_ref = np.mean(tune_unit[index_bool_maxima])
+            q_ref = np.mean(tune_unit[find_local_minima(psd)[0]])
             q_pred = q_ref
         q_ref_list.append(q_ref)
         q_ref = akf_ref.predict_update(q_ref)[0]
@@ -272,13 +269,7 @@ def tune_measurement_algorithm(synchrotron_parameters: SynchrotronConfiguration,
 
 
         # Determination of measured tune (Sensor 2) using weighted linear combination
-        # distance = normalize_to_0_1(abs(tune_unit[index_bool_maxima] - (q_ref + q_pred) / 2))
-        distance = normalize_to_0_1(abs(tune_unit[index_bool_maxima] - q_pred))
-        weight_distance = 1 - distance
-        confidence = alpha * weight_amplitude + (1 - alpha) * weight_distance
-        q_measured_index = np.argmax(confidence)
-        q_measured = tune_unit[index_bool_maxima][q_measured_index]
-        q_confidence = max(confidence)
+        q_measured, q_confidence = weight_linear_combination(tune_unit, psd, (q_ref + q_pred) / 2, alpha)
         q_measured_list.append(q_measured)
         q_measured = akf_meas.predict_update(q_measured)[0]
         q_measured_filtered.append(q_measured)
@@ -295,19 +286,21 @@ def tune_measurement_algorithm(synchrotron_parameters: SynchrotronConfiguration,
 
 
         # Peak detection method, commonly used to measure coherent tune
-        q_peak_detection = tune_unit[index_bool_maxima][np.argmax(weight_amplitude)]
+        q_peak_detection = tune_unit[np.argmax(psd)]
         peak_detection_list.append(q_peak_detection)
 
         # # Curve fitting method, commonly used to measure incoherent tune and chromaticity, which is
         # # not suitable for low SNR and limited frequency resolution scenarios
-        # cf_start = int(max(0, index_value_maxima[q_measured_index] - side_point_num * interpolate_coef // 2))
+        # cf_start = int(max(0, index_value_maxima[q_measured_index] - sideband_width/freq_res//4))
         # cf_end = int(
-        #     min(len(tune_unit) - 1, index_value_maxima[q_measured_index] + side_point_num * interpolate_coef // 2))
+        #     min(len(tune_unit) - 1, index_value_maxima[q_measured_index] + sideband_width/freq_res//4))
         # cf_params = gaussian_peak_fit(tune_unit[cf_start:cf_end + 1], psd[cf_start:cf_end + 1])
         # q_curve_fitting = cf_params[1]
         # cf_list.append(q_curve_fitting)
+        # # q_curve_fitting = akf_cf.predict_update(q_curve_fitting)[0]
+        # # cf_filtered.append(q_curve_fitting)
 
-        plt.figure()
+
         plt.plot(tune_unit, normalize_to_0_1(psd), label="sum")
         plt.plot(tune_unit, normalize_to_0_1(ema_psd.psd), label="ref")
         plt.legend()
@@ -321,6 +314,8 @@ def tune_measurement_algorithm(synchrotron_parameters: SynchrotronConfiguration,
             f"peak_detection:{q_peak_detection: .4f}, "
             # f"curve_fitting:{q_curve_fitting: .4f}"
         )
+        # if i >= 120:
+        #     print(1)
 
     dic = {'qx': qx_list,
            'q_ref': q_ref_list,
@@ -329,7 +324,8 @@ def tune_measurement_algorithm(synchrotron_parameters: SynchrotronConfiguration,
            'q_measured': q_measured_list,
            'q_measured_filtered': q_measured_filtered,
            'peak_detection': peak_detection_list,
-           'curve_fitting': cf_list,
+           # 'curve_fitting': cf_list,
+           # 'curve_fitting_filtered': cf_filtered,
            'failed_to_detect': failed_to_detect,
            'weight_ref': w1_list,
            'weight_measured': w2_list}
@@ -337,23 +333,25 @@ def tune_measurement_algorithm(synchrotron_parameters: SynchrotronConfiguration,
                           title=f"{int(detector_parameters.bandwidth/1e6)}MHz_{smoothing_method}_{line_shape}_{snr}_frev_{f_rev_mode}_{'without' if exclude_coherent else 'with'}_coherent.pkl")
     with open(f"{int(detector_parameters.bandwidth/1e6)}MHz_{smoothing_method}_{line_shape}_{snr}_frev_{f_rev_mode}_{'without' if exclude_coherent else 'with'}_coherent.pkl", "wb") as f:
         pickle.dump(dic, f, protocol=pickle.HIGHEST_PROTOCOL)
-    plt.figure()
-    plt.plot(w1_list, label="w1")
-    plt.plot(w2_list, label="w2")
-    plt.legend()
-    plt.show()
-    print(1)
+    # plt.figure()
+    # plt.plot(w1_list, label="w1")
+    # plt.plot(w2_list, label="w2")
+    # plt.legend()
+    # plt.show()
+    qx_list = np.array(qx_list)
+    q_predicted_list = np.array(q_predicted_list)
+    print(np.mean(np.abs(qx_list - q_predicted_list)[50:]))
 
 if __name__ == "__main__":
     synchrotron_parameters = SynchrotronConfiguration()
     detector_parameters = DetectorConfiguration(bandwidth=10e6)
-    smoothing_method_list = ["gaussian", "sgolay"]
-    # smoothing_method_list = ["gaussian"]
-    snr_list = [-20, -15, -10]
+    smoothing_method_list = ["gaussian"]
+    # smoothing_method_list = ["sgolay"]
+    snr_list = [-20, -15]
     # snr_list = [-20]
-    line_shape_list = ["constant", "linear", "random", "sin", "cos"]
-    # line_shape_list = ["constant"]
-    exclude_coherent_list = [False, True]
+    line_shape_list = ["constant", "linear", "random", "sin"]
+    # line_shape_list = ["linear", "random", "sin"]
+    exclude_coherent_list = [False]
     shutup.please()
     for smoothing_method in smoothing_method_list:
         for snr in snr_list:
@@ -363,6 +361,6 @@ if __name__ == "__main__":
                                                                   line_shape=line_shape,
                                                                   exclude_coherent=exclude_coherent,
                                                                   smoothing_method=smoothing_method,
-                                                                  f_rev_mode=7.5e6)
+                                                                  f_rev_mode=4e6)
                     tune_measurement_algorithm(synchrotron_parameters, detector_parameters, algorithm_parameters)
                 

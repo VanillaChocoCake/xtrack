@@ -74,17 +74,17 @@ class DetectorConfiguration:
         self.fl = self.fc - self.bandwidth / 2
         self.fh = self.fc + self.bandwidth / 2
 
-SIDE_BAND_WIDTH: float = 500e3
+SIDE_BAND_WIDTH: float = 300e3
 F_REV_INCREASE_RATE: float = 10e6
 MIN_TRACK_TURNS: int = 10
 SNR: float = -20
-MIN_FREQ_RES: float = 10e3
-SIMULATION_TIME: float = 1e-2
+MIN_FREQ_RES: float = 5e3
+SIMULATION_TIME: float = 1e-3
 MAX_LEN: int = 10
 DECAY_FACTOR: float = 0.8
 LINE_SHAPE: str = "cos"
 F_REV_MODE: float = 7.5e6
-ALPHA: float = 0.45
+ALPHA: float = 0.4
 EXCLUDE_COHERENT: bool = False
 SCHOTTSKY_HARMONIC: float = 5
 INTERPOLATE_METHOD: str = "cubic"

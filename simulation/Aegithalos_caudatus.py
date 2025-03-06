@@ -6,6 +6,7 @@ Date: 2025-02-28
 
 import numpy as np
 import matplotlib.pyplot as plt
+from numpy import ndarray
 from scipy.fft import fft, fftshift
 from scipy import signal
 from scipy.signal import savgol_filter, find_peaks
@@ -729,6 +730,7 @@ def spectral_processing(x_data: np.ndarray,
     # Perform filtering and folding per batch (loop retained for memory efficiency)
     for i in range(num_batches):
         psd = psd_all[i]
+        # psd = 10 * np.log10(psd)
         psd = interpolation(psd, "cubic", interpolate_coef)
         _, folded = fold_spectrum(psd, f_rev, f_sampling)
 
@@ -760,7 +762,7 @@ def spectral_processing(x_data: np.ndarray,
         final_psd = psd_matrix[:, freq_mask].sum(axis=0)
 
     # Make PSD bigger than 0
-    final_psd *= 1e5
+    # final_psd *= 1e5
 
     # # Apply interpolation to refine the final PSD
     # final_psd = interpolation(final_psd, interpolate_method, interpolate_coef)
@@ -932,7 +934,7 @@ def normalize_to_0_1(x_data: np.ndarray) -> np.ndarray:
 
 def sgolay_filter(data: np.ndarray,
                   window_length: int,
-                  polyorder: int = 4,
+                  polyorder: int = 2,
                   mode: str = 'mirror') -> np.ndarray:
     """
     Implements a Savitzky-Golay filter for smoothing a one-dimensional signal.
@@ -1039,11 +1041,13 @@ def fold_spectrum(spectrum: np.ndarray,
     return base_freqs, folded_psd
 
 def gaussian_filter(x_data: np.ndarray,
-                    window_size: int) -> np.ndarray:
+                    window_size: int,
+                    mode: str="reflect") -> np.ndarray:
     """
     Applies a Gaussian filter to a one-dimensional signal.
     :param x_data: The input signal (either a list or np.ndarray).
     :param window_size: The size of the filtering window (must be an odd integer).
+    :param mode: The boundary handling mode, which can be "reflect", "nearest", "constant", or "wrap".
     :return: The filtered signal (np.ndarray).
     """
     # Input validation
@@ -1058,12 +1062,13 @@ def gaussian_filter(x_data: np.ndarray,
 
     # Calculate Gaussian kernel parameters
     # Covers 95% of the energy
-    truncate = 2.0
+    truncate = 3.0
     # Standard deviation of the Gaussian kernel
-    sigma = (window_size - 1) / 4
+    sigma = (window_size - 1) // 3
 
     # Apply the Gaussian filter (boundary handling mode can be adjusted)
-    return gaussian_filter1d(x, sigma=sigma, truncate=truncate, mode='mirror')
+    # return gaussian_filter1d(x, sigma=sigma, truncate=truncate, mode='mirror')
+    return gaussian_filter1d(x, sigma=sigma, truncate=truncate, mode=mode)
 
 def find_local_maxima(psd: np.ndarray) -> (list, list):
     """
@@ -1112,7 +1117,7 @@ def find_local_minima(psd: np.ndarray) -> (list, list):
     return index_bool.tolist(), index_value
 
 class EMA_PSD:
-    def __init__(self, max_len, decay_factor=0.45):
+    def __init__(self, max_len, decay_factor=0.45, alpha = 0.4):
         """
         Initializes the Exponential Moving Average (EMA) object with the given parameters.
         :param max_len: The maximum length of the signal data.
@@ -1123,6 +1128,8 @@ class EMA_PSD:
         self.first_append = True  # Flag to track the first append operation
         self.psd = 0  # Initialize the power spectral density (PSD) as 0
         self.tune_unit = []  # Initialize the tune unit list
+        self.alpha = alpha
+        self.q_ref_history = []
 
     def append(self, tune_unit, psd):
         """
@@ -1146,7 +1153,22 @@ class EMA_PSD:
         Returns the tuning unit corresponding to the maximum PSD value.
         :return: The tuning unit associated with the highest PSD value.
         """
-        return self.tune_unit[np.argmax(self.psd)]  # Return the tune unit with the maximum PSD
+        if self.first_append:
+            self.q_ref_history.append(0.3)
+        else:
+            self.q_ref_history.append(weight_linear_combination(self.tune_unit, self.psd, self.q_ref_history[-1], self.alpha)[0])
+        return self.q_ref_history[-1]
+
+def weight_linear_combination(tune_unit: np.ndarray, psd: np.ndarray, center: float, alpha: float):
+    index_bool_maxima, index_value_maxima = find_local_maxima(psd)
+    weight_amplitude = normalize_to_0_1(psd[index_bool_maxima])
+    distance = normalize_to_0_1(abs(tune_unit[index_bool_maxima] - center))
+    weight_distance = 1 - distance
+    confidence = alpha * weight_amplitude + (1 - alpha) * weight_distance
+    wlc_index = np.argmax(confidence)
+    wlc = tune_unit[index_bool_maxima][wlc_index]
+    wlc_confidence = max(confidence)
+    return wlc, wlc_confidence
 
 class AdaptiveSensorFusionKalmanFilter:
     def __init__(
@@ -1154,148 +1176,142 @@ class AdaptiveSensorFusionKalmanFilter:
             initial_state=0.5,
             initial_estimate_error=1,
             process_noise=0.06,
-            measurement_noise=2.6 ** 2,  # Initial measurement noise for both detectors
-            max_len=8,
-            alpha=0.2,
-            min_weight=0.1
+            measurement_noise=2.6 ** 2,
+            max_len=4,  # Reduced residual window length to enhance responsiveness
+            alpha=0.5,
+            min_weight = 0.02
     ):
         """
-        Initializes the Dual Detector Adaptive Kalman Filter with the given parameters.
-        :param initial_state: The initial state estimate of the system.
-        :param initial_estimate_error: The initial estimate of the error in the state estimate.
-        :param process_noise: The process noise covariance, representing uncertainty in the system's dynamics.
-        :param measurement_noise: The measurement noise covariance, assigned to both detectors.
-        :param max_len: The maximum length of the residual history window for each detector.
-        :param alpha: The smoothing factor for adjusting noise estimates based on the residual variance.
-        :param min_weight: The minimum weight for the detector to prevent it from becoming too dominant.
+        Initializes the Adaptive Sensor Fusion Kalman Filter with dual-sensor measurement fusion.
+
+        :param initial_state: The initial estimate of the system state.
+        :param initial_estimate_error: The initial estimation error covariance.
+        :param process_noise: The covariance of the process noise, accounting for system dynamics uncertainty.
+        :param measurement_noise: The initial measurement noise covariance for both sensors.
+        :param max_len: The maximum length of the residual history window for noise adaptation.
+        :param alpha: The exponential smoothing factor for noise and process noise adaptation.
         """
-        # Initial state estimate and error covariance
+        # Initialize state estimate and its associated error covariance.
         self.x = initial_state
         self.P = initial_estimate_error
 
-        # Process noise covariance
+        # Process noise covariance, representing system model uncertainty.
         self.Q = process_noise
 
-        # Measurement noise covariance for both detectors
-        self.R1 = measurement_noise  # Initial measurement noise for detector 1
-        self.R2 = measurement_noise  # Initial measurement noise for detector 2
+        # Measurement noise covariance for the two independent sensors.
+        self.R1 = measurement_noise
+        self.R2 = measurement_noise
 
-        # Initial weights for the detectors
+        # Initialize sensor weights for measurement fusion.
         self.w1 = 0.5
         self.w2 = 0.5
 
-        # Residual history windows for each detector
-        self.window1 = deque(maxlen=max_len)  # Residual history for detector 1
-        self.window2 = deque(maxlen=max_len)  # Residual history for detector 2
+        # Maintain residual history for noise estimation with limited buffer size.
+        self.window1 = deque(maxlen=max_len)
+        self.window2 = deque(maxlen=max_len)
 
-        self.alpha = alpha  # Smoothing factor for noise adjustment
-        self.min_weight = min_weight  # Minimum weight to prevent instability
+        # Smoothing factor for adaptive noise estimation.
+        self.alpha = alpha
+        self.min_weight = min_weight
 
     def _update_detector_noise(self, window, residual, current_noise):
         """
-        Updates the measurement noise estimate for a single detector.
-        When the number of residuals in the window is greater than or equal to 2,
-        the variance of the residuals is used to update the noise estimate.
-        :param window: The residual history window for the detector.
+        Updates the measurement noise covariance estimate based on residual data.
+
+        The method employs an exponential moving average strategy to estimate the noise level,
+        which reduces sensitivity to transient fluctuations while ensuring adaptability.
+
+        :param window: The residual history window for the respective sensor.
         :param residual: The current residual (difference between measurement and predicted state).
-        :param current_noise: The current measurement noise estimate for the detector.
-        :return: The updated measurement noise estimate.
+        :param current_noise: The current measurement noise estimate.
+        :return: Updated measurement noise estimate.
         """
-        window.append(residual)
+        window.append(residual)  # Store residuals in the buffer for historical tracking.
 
-        # If the window contains enough residuals, update the measurement noise estimate
-        if len(window) >= 2:
-            return self.alpha * np.var(window) + (1 - self.alpha) * current_noise
-
-        # Otherwise, retain the current noise estimate
-        return current_noise
+        # Exponentially weighted update for noise estimation, reducing reliance on historical variance.
+        return self.alpha * (residual ** 2) + (1 - self.alpha) * current_noise
 
     def _adjust_detector_weights(self):
-        """
-        Adjusts the weights of the detectors based on the current measurement noise estimates.
-        Ensures that the weights remain within the minimum threshold to prevent instability.
-        """
-        total_precision = 1 / self.R1 + 1 / self.R2  # Total precision is the sum of the individual precisions
+        """权重剪切策略"""
+        total_precision = 1/self.R1 + 1/self.R2
+        self.w1 = (1/self.R1) / total_precision
+        self.w2 = 1 - self.w1
 
-        # Calculate the normalized weight for each detector
-        w1 = (1 / self.R1) / total_precision
-        if w1 < self.min_weight:
-            # If detector 1 weight is too small, adjust the weights accordingly
-            w1 = self.min_weight
-            w2 = 1 - w1
-            self.R1 = 1 / (w1 * total_precision)
-            self.R2 = 1 / (w2 * total_precision)
-        elif w1 > 1 - self.min_weight:
-            # If detector 1 weight is too large, adjust the weights accordingly
-            w1 = 1 - self.min_weight
-            w2 = 1 - w1
-            self.R1 = 1 / (w1 * total_precision)
-            self.R2 = 1 / (w2 * total_precision)
+        # 应用权重剪切
+        if self.w1 < self.min_weight:
+            self.w1 = self.min_weight
+            self.w2 = 1 - self.min_weight
+        elif self.w1 > 1 - self.min_weight:
+            self.w1 = 1 - self.min_weight
+            self.w2 = self.min_weight
 
     def predict_update(self, z1, z2):
         """
-        Performs the prediction and update steps of the Kalman filter using measurements from two detectors.
-        :param z1: The measurement from detector 1.
-        :param z2: The measurement from detector 2.
+        Executes the prediction and update steps of the Kalman filter, incorporating sensor fusion.
+
+        This function integrates sensor data by computing dynamically adjusted fusion weights,
+        applying a Kalman gain to refine the state estimate, and updating noise statistics
+        adaptively.
+
+        :param z1: Measurement from sensor 1.
+        :param z2: Measurement from sensor 2.
         :return: The updated state estimate.
         """
         # ----------- Prediction Step -----------
-        # Predict the next state based on the current state estimate
+        # Predict the state estimate based on the previous state.
         x_pred = self.x
 
-        # Predict the error covariance, considering process noise
+        # Predict the error covariance by incorporating process noise.
         P_pred = self.P + self.Q
 
         # ----------- Measurement Fusion Step -----------
-        # Calculate the total precision (sum of individual detector precisions)
+        # Compute the total measurement precision from both sensors.
         total_precision = 1 / self.R1 + 1 / self.R2
+        R_fused = 1 / total_precision  # Compute the equivalent noise covariance after fusion.
 
-        # Normalize the weights for each detector based on their precision
-        self.w1 = (1 / self.R1) / total_precision
-        self.w2 = (1 / self.R2) / total_precision
+        # Adjust sensor fusion weights dynamically based on noise statistics.
+        self._adjust_detector_weights()
 
-        # Fuse the measurements from both detectors using the calculated weights
+        # Compute the fused measurement using the updated weights.
         z_fused = self.w1 * z1 + self.w2 * z2
 
-        # Calculate the equivalent measurement noise after fusion
-        R_fused = 1 / total_precision
-
         # ----------- Update Step -----------
-        # Compute the Kalman gain based on predicted error covariance and measurement noise
+        # Compute the Kalman gain, which balances prior knowledge with new observations.
         K = P_pred / (P_pred + R_fused)
 
-        # Compute the fused residual (innovation)
+        # Compute the innovation (residual) of the fused measurement.
         residual_fused = z_fused - x_pred
 
-        # Update the state estimate using the Kalman gain and residual
+        # Update the state estimate based on the innovation and Kalman gain.
         self.x = x_pred + K * residual_fused
 
-        # Update the error covariance
+        # Update the error covariance to reflect improved knowledge of state uncertainty.
         self.P = (1 - K) * P_pred
 
-        # ----------- Noise Update -----------
-        # Calculate the residuals for both detectors and update the noise estimates
+        # ----------- Noise Adaptation Step -----------
+        # Compute individual sensor residuals.
         residual1 = z1 - x_pred
         residual2 = z2 - x_pred
+
+        # Update sensor noise covariance estimates based on recent residuals.
         self.R1 = self._update_detector_noise(self.window1, residual1, self.R1)
         self.R2 = self._update_detector_noise(self.window2, residual2, self.R2)
 
-        # Adjust the detector weights and balance the measurement noise
-        self._adjust_detector_weights()
+        # Adaptively update process noise covariance using residual-driven adaptation.
+        self.Q = self.alpha * (residual_fused ** 2) + (1 - self.alpha) * self.Q
 
-        # Update the process noise based on the residual of the fused measurement
-        self.Q = self.alpha * residual_fused**2 + (1 - self.alpha) * self.Q
-
-        return self.x
+        return self.x  # Return the refined state estimate.
 
     def detector_weights(self):
         """
-        Returns the normalized weights of the two detectors.
-        The weights are guaranteed to sum to 1.
-        :return: The normalized weights of detector 1 and detector 2.
+        Returns the normalized weights of the two sensors.
+
+        The weights reflect the relative confidence in each sensor’s measurement,
+        with the sum always constrained to unity.
+
+        :return: A tuple (w1, w2) representing the weights assigned to sensor 1 and sensor 2.
         """
-        total = self.w1 + self.w2
-        return self.w1 / total, self.w2 / total  # Normalize weights to ensure they sum to 1
+        return self.w1, self.w2  # Return the updated sensor fusion weights.
 
 class DualDetectorKalmanFilter:
     dt = 1.0
@@ -1304,7 +1320,7 @@ class DualDetectorKalmanFilter:
                                              [0, 1]]),
                  observation_matrix=np.array([[1, 0],
                                               [1, 0]]),
-                 transition_covariance=0.01 * np.eye(2),
+                 transition_covariance=0.001 * np.eye(2),
                  initial_state_mean=np.array([0.0, 0.0]),
                  initial_state_covariance=np.eye(2)
                  ):
