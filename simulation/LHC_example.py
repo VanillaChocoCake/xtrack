@@ -1,9 +1,7 @@
 import xtrack as xt
 import xpart as xp
 import matplotlib.pyplot as plt
-import numpy as np
-from scipy.fft import fft, fftshift
-from Aegithalos_caudatus import *
+from utils import *
 
 lmap = xt.LineSegmentMap(length=26658.8831999989, qx=0.27, qy=0.295, dqx=15, dqy=15, longitudinal_mode='nonlinear',
     voltage_rf=4e6, frequency_rf=400e6, lag_rf=180, momentum_compaction_factor=3.225e-04, betx=1, bety=1)
@@ -35,38 +33,3 @@ for ax, region in zip([ax1, ax2, ax3], ['lowerH', 'center', 'upperH']):
     # ax.set_yscale('log')
 plt.tight_layout()
 plt.show()
-
-batch_size = 32768
-x_data = BPM.x_mean
-# x_data = BPM.y_mean
-x_data = np.nan_to_num(x_data, nan=0)
-x_data_noisy = generate_noisy_signal(x_data, 0)
-# plot([x_data, x_data_noisy])
-# x_data_noisy = apply_bandpass_filter(x_data_noisy, fs=f_sampling, lowcut=detector.fl, highcut=detector.fh)
-x_data_noisy = reshape_with_padding(x_data_noisy, batch_size)
-# N = len(x_data)  # 数据点数
-N = batch_size
-psd_s = 0
-psd_p = 1
-for i in range(x_data_noisy.shape[0]):
-    # 计算FFT
-    X = fft(x_data_noisy[i, :])
-    # fftshift将零频分量移到中心
-    X_shifted = fftshift(X)
-    # 生成频率轴，从-f_sampling/2到f_sampling/2
-    # 计算PSD（归一化方法可根据实际需要调整）
-    psd_i = np.abs(X_shifted) ** 2 / (N * f_sampling)
-
-    # psd_i = sgolay_filter(psd_i, window_size, min(4, window_size - 1))
-    psd_s += psd_i
-    psd_p *= (normalize_to_0_1(psd_i) + 1)
-    psd_p = normalize_to_0_1(psd_p) + 1
-psd_s -= min(psd_s)
-coef = max(psd_s)/max(psd_p)
-psd_p *= coef
-freqs = np.linspace(-f_sampling / 2, f_sampling / 2, N, endpoint=False)
-plt.figure()
-plt.plot(freqs/f_rev, psd_s)
-plt.plot(freqs/f_rev, psd_p)
-plt.show()
-print(1)
