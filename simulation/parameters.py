@@ -90,6 +90,7 @@ SCHOTTSKY_HARMONIC: float = 5
 INTERPOLATE_METHOD: str = "cubic"
 INTERPOLATE_COEF: int = 4
 SMOOTHING_METHOD: str = "gaussian"
+LATENCY: int = 5
 
 @dataclass
 class AlgorithmConfiguration:
@@ -109,3 +110,4 @@ class AlgorithmConfiguration:
     interpolate_method: str = INTERPOLATE_METHOD
     interpolate_coef: int = INTERPOLATE_COEF
     smoothing_method: str = SMOOTHING_METHOD
+    latency: int = LATENCY

@@ -11,8 +11,8 @@ import pickle
 import scipy.constants as sc
 
 for_comparison = []
-np.random.seed(114514)
-random.seed(114514)
+# np.random.seed(114514)
+# random.seed(114514)
 
 def tune_measurement_algorithm(synchrotron_parameters: SynchrotronConfiguration,
                                detector_parameters: DetectorConfiguration,
@@ -34,6 +34,7 @@ def tune_measurement_algorithm(synchrotron_parameters: SynchrotronConfiguration,
     interpolate_method = algorithm_parameters.interpolate_method
     interpolate_coef = algorithm_parameters.interpolate_coef
     smoothing_method = algorithm_parameters.smoothing_method
+    latency = algorithm_parameters.latency
 
     ema_psd = EMA_PSD(max_len=max_len, decay_factor=decay_factor)
     if synchrotron_parameters.qx > 0.5:
@@ -58,8 +59,8 @@ def tune_measurement_algorithm(synchrotron_parameters: SynchrotronConfiguration,
     qx_list = generate_q_list(line_shape, len(f_rev_range), qx - 0.09, qx + 0.09)
     qy_list = generate_q_list(line_shape, len(f_rev_range), qy - 0.09, qy + 0.09)
 
-    qx_list = signal_loss(qx_list, True)
-    qy_list = signal_loss(qy_list, True)
+    # qx_list = signal_loss(qx_list, True)
+    # qy_list = signal_loss(qy_list, True)
 
     q_ref_list = []
     q_ref_filtered = []
@@ -78,7 +79,7 @@ def tune_measurement_algorithm(synchrotron_parameters: SynchrotronConfiguration,
     dkf = AdaptiveSensorFusionKalmanFilter(initial_state=qx)
     akf_ref = AdaptiveKalmanFilter(transition_covariance_Q=0.01*np.eye(2))
     akf_meas = AdaptiveKalmanFilter(transition_covariance_Q=0.001*np.eye(2))
-    plt.figure()
+    # plt.figure()
     for i in range(len(qx_list)):
         # Part Simulation
         qy = qy_list[i]
@@ -271,12 +272,14 @@ def tune_measurement_algorithm(synchrotron_parameters: SynchrotronConfiguration,
             q_ref = ema_psd.acquire_q_ref()
         ema_psd.append(tune_unit, psd)
         q_ref_list.append(q_ref)
-        q_ref = akf_ref.predict_update(q_ref)[0]
+        q_ref = np.median(q_ref_list[-5:])
+        # q_ref = akf_ref.predict_update(np.median(q_ref_list[-5:]))[0]
         q_ref_filtered.append(q_ref)
 
         # Determination of measured tune (Sensor 2) using weighted linear combination
-        q_measured, q_confidence = weighted_linear_combination(tune_unit, psd, q_pred, alpha)
+        q_measured, q_confidence = weighted_linear_combination(tune_unit, psd, q_ref, alpha)
         q_measured_list.append(q_measured)
+        q_measured = np.median(q_measured_list[-5:])
         q_measured = akf_meas.predict_update(q_measured)[0]
         q_measured_filtered.append(q_measured)
 
@@ -318,7 +321,7 @@ def tune_measurement_algorithm(synchrotron_parameters: SynchrotronConfiguration,
         # if i >= 120:
         #     print(1)
 
-    dic = {'qx': qx_list,
+    dic = {'qx': np.roll(qx_list, latency),
            'q_ref': q_ref_list,
            'q_ref_filtered': q_ref_filtered,
            'q_predicted': q_predicted_list,
@@ -363,7 +366,7 @@ if __name__ == "__main__":
                                                                   line_shape=line_shape,
                                                                   exclude_coherent=exclude_coherent,
                                                                   smoothing_method=smoothing_method,
-                                                                  f_rev_mode=4.1e6)
+                                                                  f_rev_mode=4e6)
                     tune_measurement_algorithm(synchrotron_parameters, detector_parameters, algorithm_parameters)
                 
     print(for_comparison)
