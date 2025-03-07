@@ -14,7 +14,7 @@ shutup.please()
 # np.random.seed(114514)
 # random.seed(114514)
 
-def tune_measurement_algorithm(synchrotron_parameters: SynchrotronConfiguration,
+def Schottky_spectra(synchrotron_parameters: SynchrotronConfiguration,
                                frev: float,
                                schottky_harmonic: int=5,
                                n_turns: int=3000,
@@ -73,3 +73,6 @@ def tune_measurement_algorithm(synchrotron_parameters: SynchrotronConfiguration,
     plt.savefig(f"schottky_n_turns_{n_turns}.png")
     plt.show()
 
+if __name__ == "__main__":
+    frev = 7.5e6
+    Schottky_spectra(SynchrotronConfiguration(), frev, 5, int(1e-3*frev), 0.05, 1e-4)
